@@ -59,6 +59,10 @@ class youth_allowance_eligible(Variable):
 
 ## Installation
 
+### Try online 
+You can play around with it in a test environment 
+https://courgette-codifier.netlify.app/
+
 ### Web Editor
 
 No installation is required
