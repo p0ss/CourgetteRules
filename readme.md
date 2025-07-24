@@ -4,7 +4,7 @@
 
 ## Overview
 
-The Courgette Method is a domain-specific language (DSL) and toolchain for writing eligibility rules and calculations in plain English that can be automatically compiled to [OpenFisca](https://openfisca.org/) code. It's designed specifically for Australian government services and social security legislation, following the Australian Government Style Manual.
+Courgette rules are a way of writing eligibility rules and calculations which are very close to plain language that can be automatically compiled to code.
 
 ### Why Courgette?
 
@@ -13,7 +13,7 @@ The Courgette Method is a domain-specific language (DSL) and toolchain for writi
 - **Testable and verifiable**: Rules can be validated against real scenarios
 - **Maintainable**: Changes to policy can be directly reflected in the rules
 
-## Quick Start
+## Simple Example Corgette Rules
 
 ```courgette
 Scenario: Youth Allowance
@@ -23,25 +23,51 @@ Scenario: Youth Allowance
   Then youth_allowance_eligible = true
   And payment is $350.50 per fortnight
 ```
+Easy to read right? 
 
 This compiles to complete OpenFisca Python code that can calculate eligibility and payment amounts.
 
+```openfisca
+from openfisca_core.model_api import *
+from openfisca_core.periods import MONTH, YEAR, ETERNITY
+
+
+class youth_allowance_eligible(Variable):
+    value_type = bool
+    entity = Person
+    definition_period = MONTH
+    label = "Youth Allowance eligibility"
+    
+    def formula(person, period, parameters):
+        age = person('age', period)
+        is_student = person('is_student', period)
+        parental_income = person('parental_income', period)
+        payment = person('payment', period)
+
+        eligible = (
+            (age >= 16 and person('youth_allowance_eligible', period) <= 24)
+            and (is person('youth_allowance_eligible', period) student == True)
+            and (parental person('youth_allowance_eligible', period) income < 60000)
+            and (payment is $350.50 per fortnight)
+        )
+
+        return eligible
+```
+
+## How it works
+ Courgette is an expanded version of [Cucumber/Gherkin](https://cucumber.io/docs/), using [Lark]([https://lark-parser.readthedocs.io/en/latest/](https://lark-parser.readthedocs.io/en/latest/philosophy.html)) free text parser to add custom syntax to cover legislative rules. This is exposed in a [Quill](https://quilljs.com/) wysiwyg editor styled with [AGDS](https://design-system.agriculture.gov.au/), and includes a compiler so that Courgette is continually compiled into [OpenFisca](https://openfisca.org/en/).
+
 ## Installation
 
-### Web Editor (Recommended)
+### Web Editor
 
-Open `editor.html` in a modern web browser. The editor includes:
+No installation is required
+Just Download the files and open `index.html` in a browser. 
+The editor includes:
 - Syntax highlighting and validation
 - Real-time OpenFisca code generation
 - Example scenarios
-- No installation required
 
-### Python Parser
-
-```bash
-pip install lark-parser
-python parser.py
-```
 
 ## Courgette Syntax
 
@@ -52,6 +78,8 @@ A Courgette file consists of three types of blocks:
 1. **Definitions** - Reusable terms and calculations
 2. **Schedules** - Payment rates and thresholds
 3. **Scenarios** - Eligibility rules and outcomes
+
+This mirrors the structure of social security legislation, allowing easy comparison of the plain language against the legislative text by all stakeholders.  Given its always compiling to OpenFisca, if a stakeholder signs off on the easy to read Courgette, then they've also signed off on the generated OpenFisca, even if they don't understand code. 
 
 ### Definitions
 
@@ -261,7 +289,7 @@ Scenario: Family Tax Benefit Part B
 
 ### Australian English
 
-Use Australian spelling and terminology:
+Where possib Australian spelling and terminology:
 - ✅ `recognise` not ❌ `recognize`
 - ✅ `labour` not ❌ `labor`  
 - ✅ `fortnight` not ❌ `two weeks`
@@ -435,3 +463,4 @@ Built for the Australian Government Rules as Code community. Special thanks to:
 ---
 
 *Remember: The goal is legislation that's as easy to read as a recipe, but as precise as code.*
+
