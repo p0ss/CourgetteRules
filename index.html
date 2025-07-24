@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Courgette Method – Legislation to OpenFisca</title>
+  <title>Courgette Codifier – Readable Rules as Code</title>
 
   <!-- Agriculture Design System core stylesheet -->
   <link rel="stylesheet" href="https://design-system.agriculture.gov.au/latest/agds.css" />
@@ -192,7 +192,7 @@
   <header class="au-header au-header--dark">
     <div class="container">
       <div style="display: flex; justify-content: space-between; align-items: center;">
-        <h1 class="au-header__title">Courgette Method <small class="au-display-xs">alpha</small></h1>
+        <h1 class="au-header__title">Courgette Codifier <small class="au-display-xs">alpha</small></h1>
         <nav>
           <button class="au-btn au-btn--secondary au-btn--small" onclick="toggleExamples()">
             Examples
@@ -257,71 +257,12 @@
     </div>
   </div>
 
-  <!-- Web Worker for validation -->
-  <script id="validation-worker" type="javascript/worker">
-    // Simple validation rules
-    const validateCourgette = (text) => {
-      const errors = [];
-      const lines = text.split('\n');
-      
-      let inScenario = false;
-      let hasConditions = false;
-      let hasOutcomes = false;
-      
-      lines.forEach((line, idx) => {
-        const trimmed = line.trim();
-        
-        // Check for scenario structure
-        if (trimmed.startsWith('Scenario:')) {
-          if (inScenario && !hasOutcomes) {
-            errors.push({
-              line: idx,
-              message: 'Previous scenario missing "Then" outcomes'
-            });
-          }
-          inScenario = true;
-          hasConditions = false;
-          hasOutcomes = false;
-        }
-        
-        if (inScenario) {
-          if (trimmed.startsWith('When') || trimmed.startsWith('Given')) {
-            hasConditions = true;
-          }
-          if (trimmed.startsWith('Then')) {
-            if (!hasConditions) {
-              errors.push({
-                line: idx + 1,
-                message: 'Scenario must have conditions before outcomes'
-              });
-            }
-            hasOutcomes = true;
-          }
-        }
-        
-        // Check for common syntax errors
-        if (trimmed.includes('==') && !trimmed.match(/\w+\s*==\s*["'\w]+/)) {
-          errors.push({
-            line: idx + 1,
-            message: 'Invalid comparison syntax'
-          });
-        }
-      });
-      
-      return errors;
-    };
-    
-    self.addEventListener('message', (e) => {
-      const errors = validateCourgette(e.data);
-      self.postMessage(errors);
-    });
-  </script>
+
 
   <!-- Main JavaScript -->
   <script>
-    // Create validation worker
-    const workerBlob = new Blob([document.getElementById('validation-worker').textContent], { type: 'application/javascript' });
-    const validationWorker = new Worker(URL.createObjectURL(workerBlob));
+    // Create validation worker from external file
+    const validationWorker = new Worker('validator.js');
 
     // Quill custom blots
     const Block = Quill.import('blots/block');
@@ -497,12 +438,199 @@
       return text;
     }
 
+    // Natural language to Python operator conversion
+    function parseCondition(condition) {
+      // First, convert natural language operators to symbols
+      let parsed = condition
+        // Natural language operators (must come before symbol replacements)
+        .replace(/\bis\s+less\s+than\b/gi, '<')
+        .replace(/\bis\s+greater\s+than\b/gi, '>')
+        .replace(/\bis\s+at\s+least\b/gi, '>=')
+        .replace(/\bis\s+at\s+most\b/gi, '<=')
+        .replace(/\bis\s+more\s+than\b/gi, '>')
+        .replace(/\bis\s+no\s+more\s+than\b/gi, '<=')
+        .replace(/\bis\s+no\s+less\s+than\b/gi, '>=')
+        .replace(/\bis\s+equal\s+to\b/gi, '==')
+        .replace(/\bis\s+not\s+equal\s+to\b/gi, '!=')
+        .replace(/\bis\s+not\b/gi, '!=')
+        .replace(/\bis\b(?!\s+(less|greater|at|more|no|equal|not))/gi, '==');
+      
+      // Then handle remaining conversions
+      parsed = parsed
+        .replace(/\s*==\s*/g, ' == ')
+        .replace(/\s*!=\s*/g, ' != ')
+        .replace(/\s*<=\s*/g, ' <= ')
+        .replace(/\s*>=\s*/g, ' >= ')
+        .replace(/\s*<\s*/g, ' < ')
+        .replace(/\s*>\s*/g, ' > ')
+        .replace(/\sbetween\s+(\S+)\s+and\s+(\S+)/g, ' >= $1 and _ <= $2')
+        .replace(/\btrue\b/gi, 'True')
+        .replace(/\bfalse\b/gi, 'False')
+        .replace(/\byes\b/gi, 'True')
+        .replace(/\bno\b/gi, 'False')
+        .replace(/\beligible\b/gi, 'True')
+        .replace(/"([^"]+)"/g, "'$1'");
+      
+      return parsed;
+    }
+
+    function parseOutcome(outcome) {
+      // Extract eligibility rules - support natural language
+      const eligibilityPatterns = [
+        /(\w+)\s*=\s*true/i,
+        /(\w+)\s+is\s+eligible/i,
+        /(\w+)\s+is\s+yes/i,
+        /(\w+)\s+is\s+true/i
+      ];
+      
+      for (const pattern of eligibilityPatterns) {
+        const match = outcome.match(pattern);
+        if (match) {
+          return {
+            type: 'eligibility',
+            variable: match[1],
+            value: true
+          };
+        }
+      }
+      
+      const paymentMatch = outcome.match(/payment\s+is\s+\$?([\d,._]+)(?:\s+per\s+(\w+))?/i);
+      if (paymentMatch) {
+        return {
+          type: 'payment',
+          amount: parseFloat(paymentMatch[1].replace(/[,_]/g, '')),
+          period: paymentMatch[2] || 'fortnight'
+        };
+      }
+      
+      const scheduleMatch = outcome.match(/rate\s+is\s+determined\s+by\s+(.+)/i);
+      if (scheduleMatch) {
+        return {
+          type: 'schedule',
+          schedule: scheduleMatch[1].trim()
+        };
+      }
+      
+      const reductionMatch = outcome.match(/payment\s+reduces\s+by\s+(\d+)\s+cents\s+per\s+dollar\s+over\s+\$?([\d,._]+)/i);
+      if (reductionMatch) {
+        return {
+          type: 'reduction',
+          cents: parseInt(reductionMatch[1]),
+          threshold: parseFloat(reductionMatch[2].replace(/[,_]/g, ''))
+        };
+      }
+      
+      return { type: 'unknown', text: outcome };
+    }
+
+    function extractVariables(text, variables) {
+      // Extract variable names from conditions
+      const matches = text.match(/\b[a-zA-Z_]\w*\b/g);
+      if (matches) {
+        matches.forEach(match => {
+          if (!['true', 'false', 'and', 'or', 'not', 'between', 'is', 'yes', 'no', 'eligible'].includes(match.toLowerCase())) {
+            variables.add(match);
+          }
+        });
+      }
+    }
+
+    function generateVariableDefinitions(variables) {
+      let code = '# Variable definitions\n';
+      
+      variables.forEach(variable => {
+        const varType = guessVariableType(variable);
+        code += `
+class ${variable}(Variable):
+    value_type = ${varType}
+    entity = Person
+    definition_period = MONTH
+    label = "${variable.replace(/_/g, ' ')}"
+`;
+      });
+      
+      return code;
+    }
+
+    function guessVariableType(variable) {
+      if (variable.includes('age') || variable.includes('income') || variable.includes('amount')) {
+        return 'float';
+      }
+      if (variable.includes('is_') || variable.includes('has_') || variable.includes('eligible')) {
+        return 'bool';
+      }
+      if (variable.includes('status') || variable.includes('type')) {
+        return 'str';
+      }
+      return 'float';
+    }
+
+    function generateScenarioCode(name, conditions, outcomes, variables) {
+      const className = name.replace(/\s+/g, '_').toLowerCase();
+      let code = `
+class ${className}_eligible(Variable):
+    value_type = bool
+    entity = Person
+    definition_period = MONTH
+    label = "${name} eligibility"
+    
+    def formula(person, period, parameters):
+`;
+      
+      // Generate variable declarations
+      const usedVars = new Set();
+      conditions.forEach(condition => {
+        // Extract all variable names from the condition
+        const varMatches = condition.match(/\b[a-zA-Z_]\w*\b/g) || [];
+        varMatches.forEach(varName => {
+          if (!['True', 'False', 'and', 'or', 'not'].includes(varName) && !usedVars.has(varName)) {
+            usedVars.add(varName);
+            code += `        ${varName} = person('${varName}', period)\n`;
+          }
+        });
+      });
+      
+      if (conditions.length > 0) {
+        code += '\n        eligible = (\n';
+        conditions.forEach((condition, idx) => {
+          // The condition is already parsed to Python syntax
+          code += `            ${idx > 0 ? 'and ' : ''}(${condition})\n`;
+        });
+        code += '        )\n\n';
+        code += '        return eligible\n';
+      } else {
+        code += '        return True\n';
+      }
+      
+      // Generate payment calculation if applicable
+      const paymentOutcome = outcomes.find(o => o.type === 'payment');
+      if (paymentOutcome) {
+        code += `
+
+class ${className}_payment(Variable):
+    value_type = float
+    entity = Person
+    definition_period = MONTH
+    label = "${name} payment amount"
+    
+    def formula(person, period, parameters):
+        eligible = person('${className}_eligible', period)
+        return eligible * ${paymentOutcome.amount}
+`;
+      }
+      
+      return code;
+    }
+
     // Courgette to OpenFisca compiler
     function compileToOpenFisca(courgette) {
       const lines = courgette.split('\n');
       let output = `"""
 Generated OpenFisca code from Courgette rules
 Created: ${new Date().toLocaleDateString('en-AU')}
+
+Note: This generated code should be validated with OpenFisca's type checker
+Run: openfisca test [this_file.py] --verbose
 """
 
 from openfisca_core.model_api import *
@@ -567,142 +695,6 @@ from openfisca_core.periods import MONTH, YEAR, ETERNITY
       return output;
     }
 
-    function parseCondition(condition) {
-      // Convert plain English conditions to Python
-      return condition
-        .replace(/\s*==\s*/g, ' == ')
-        .replace(/\s*!=\s*/g, ' != ')
-        .replace(/\s*<=\s*/g, ' <= ')
-        .replace(/\s*>=\s*/g, ' >= ')
-        .replace(/\s*<\s*/g, ' < ')
-        .replace(/\s*>\s*/g, ' > ')
-        .replace(/\sbetween\s+(\S+)\s+and\s+(\S+)/g, ' >= $1 and _ <= $2')
-        .replace(/true/gi, 'True')
-        .replace(/false/gi, 'False')
-        .replace(/"([^"]+)"/g, "'$1'");
-    }
-
-    function parseOutcome(outcome) {
-      // Extract eligibility and payment rules
-      const eligibilityMatch = outcome.match(/(\w+)\s*=\s*true/i);
-      if (eligibilityMatch) {
-        return {
-          type: 'eligibility',
-          variable: eligibilityMatch[1],
-          value: true
-        };
-      }
-      
-      const paymentMatch = outcome.match(/payment\s+is\s+\$?([\d,._]+)(?:\s+per\s+(\w+))?/i);
-      if (paymentMatch) {
-        return {
-          type: 'payment',
-          amount: parseFloat(paymentMatch[1].replace(/[,_]/g, '')),
-          period: paymentMatch[2] || 'fortnight'
-        };
-      }
-      
-      return { type: 'unknown', text: outcome };
-    }
-
-    function extractVariables(text, variables) {
-      // Extract variable names from conditions
-      const matches = text.match(/\b[a-zA-Z_]\w*\b/g);
-      if (matches) {
-        matches.forEach(match => {
-          if (!['true', 'false', 'and', 'or', 'not', 'between'].includes(match.toLowerCase())) {
-            variables.add(match);
-          }
-        });
-      }
-    }
-
-    function generateVariableDefinitions(variables) {
-      let code = '# Variable definitions\n';
-      
-      variables.forEach(variable => {
-        const varType = guessVariableType(variable);
-        code += `
-class ${variable}(Variable):
-    value_type = ${varType}
-    entity = Person
-    definition_period = MONTH
-    label = "${variable.replace(/_/g, ' ')}"
-`;
-      });
-      
-      return code;
-    }
-
-    function guessVariableType(variable) {
-      if (variable.includes('age') || variable.includes('income') || variable.includes('amount')) {
-        return 'float';
-      }
-      if (variable.includes('is_') || variable.includes('has_') || variable.includes('eligible')) {
-        return 'bool';
-      }
-      if (variable.includes('status') || variable.includes('type')) {
-        return 'str';
-      }
-      return 'float';
-    }
-
-    function generateScenarioCode(name, conditions, outcomes, variables) {
-      const className = name.replace(/\s+/g, '_').toLowerCase();
-      let code = `
-class ${className}_eligible(Variable):
-    value_type = bool
-    entity = Person
-    definition_period = MONTH
-    label = "${name} eligibility"
-    
-    def formula(person, period, parameters):
-`;
-      
-      // Generate condition checks
-      conditions.forEach(condition => {
-        const varMatch = condition.match(/^(\w+)/);
-        if (varMatch) {
-          code += `        ${varMatch[1]} = person('${varMatch[1]}', period)\n`;
-        }
-      });
-      
-      code += '\n        eligible = (\n';
-      conditions.forEach((condition, idx) => {
-        const pythonCondition = condition
-          .replace(/(\w+)/, '$1')
-          .replace(/\s*_\s*/, ` person('${className}_eligible', period) `);
-        code += `            ${idx > 0 ? 'and ' : ''}(${pythonCondition})\n`;
-      });
-      code += '        )\n\n';
-      
-      // Generate outcomes
-      outcomes.forEach(outcome => {
-        if (outcome.type === 'eligibility') {
-          code += `        return eligible\n`;
-        }
-      });
-      
-      // Generate payment calculation if applicable
-      const paymentOutcome = outcomes.find(o => o.type === 'payment');
-      if (paymentOutcome) {
-        code += `
-
-class ${className}_payment(Variable):
-    value_type = float
-    entity = Person
-    definition_period = MONTH
-    label = "${name} payment amount"
-    
-    def formula(person, period, parameters):
-        eligible = person('${className}_eligible', period)
-        return eligible * ${paymentOutcome.amount}
-`;
-      }
-      
-      return code;
-    }
-
     // Update functions
     let updateTimer;
     function scheduleUpdate() {
@@ -753,26 +745,26 @@ class ${className}_payment(Variable):
     // Example management
     const examples = {
       youth_allowance: `Scenario: Youth Allowance
-  When age < 25
+  When age is less than 25
   And any of these are true:
-    - studying == true
-    - employment_status == "unemployed"
-  And income < 20000
-  Then youth_allowance = true
+    - studying is true
+    - employment_status is "unemployed"
+  And income is less than 20000
+  Then youth_allowance is eligible
   And payment is $350.50 per fortnight`,
       
       family_tax_benefit: `Definition: secondary_earner_income
   The lower of partner A income and partner B income
 
 Schedule: FTB Part B Maximum Rates
-  When youngest_child_age < 5: $161.55 per fortnight
+  When youngest_child_age is less than 5: $161.55 per fortnight
   When youngest_child_age between 5 and 18: $112.55 per fortnight
 
 Scenario: Family Tax Benefit Part B
-  When is_couple == true
-  And has_dependent_children == true
+  When is_couple is true
+  And has_dependent_children is true
   And secondary_earner_income between 5767 and 28671
-  Then family_tax_benefit_part_b = true
+  Then family_tax_benefit_part_b is eligible
   And rate is determined by FTB Part B Maximum Rates
   And payment reduces by 20 cents per dollar over $5,767`,
       
@@ -783,12 +775,12 @@ Definition: asset_value
   Total value of all assessable assets excluding principal home
 
 Scenario: Age Pension
-  When age >= 67
-  And is_australian_resident == true
-  And residence_years >= 10
-  And assessable_income < 2115.40
-  And asset_value < 419000
-  Then age_pension = true
+  When age is at least 67
+  And is_australian_resident is yes
+  And residence_years is at least 10
+  And assessable_income is less than 2115.40
+  And asset_value is less than 419000
+  Then age_pension is eligible
   And payment is $1096.70 per fortnight
   And payment reduces by 50 cents per dollar over $204`
     };

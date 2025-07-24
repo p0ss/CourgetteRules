@@ -300,7 +300,7 @@ class {class_name}_payment(Variable):
         return "return 0  # TODO: Implement payment calculation"
 
 # ---------------------------------------------------------------------------
-#  2. Enhanced Lark Grammar for Courgette
+#  2. Enhanced Lark Grammar for Courgette - Plain English
 # ---------------------------------------------------------------------------
 
 _COURGETTE_GRAMMAR = r"""
@@ -316,22 +316,44 @@ _COURGETTE_GRAMMAR = r"""
 ?atom: comparison
      | "(" expr ")"
 
-comparison: var comp_op value                 -> simple_comp
-          | var "between" value "and" value   -> between_comp
-          | var "is" "not"? value            -> is_comp
+comparison: var comp_op value                           -> simple_comp
+          | var "between" value "and" value             -> between_comp
+          | var "is" "not"? value                      -> is_comp
+          | var "is" comp_phrase value                 -> natural_comp
+          | var                                         -> bool_var
 
-var: IDENTIFIER                              -> var
+var: IDENTIFIER                                         -> var
 
+// Natural language comparison operators
+comp_phrase: "less" "than"                             -> lt
+           | "greater" "than"                          -> gt
+           | "at" "least"                              -> gte
+           | "at" "most"                               -> lte
+           | "more" "than"                             -> gt
+           | "no" "more" "than"                        -> lte
+           | "no" "less" "than"                        -> gte
+           | "equal" "to"                              -> eq
+           | "not" "equal" "to"                        -> ne
+
+// Code-style operators (still supported for compatibility)
 comp_op: "==" | "!=" | "<=" | ">=" | "<" | ">"
 
-value: NUMBER      -> num
-     | STRING      -> string
-     | BOOL        -> bool
-     | IDENTIFIER  -> var_value
+value: money                -> money_value
+     | NUMBER               -> num
+     | STRING               -> string
+     | BOOL                 -> bool
+     | IDENTIFIER           -> var_value
 
-BOOL: "true"i | "false"i
+// Money values with optional $ and commas
+money: "$" NUMBER_WITH_COMMAS
+     | NUMBER_WITH_COMMAS
+
+// Boolean values - more natural forms
+BOOL: "true"i | "false"i | "yes"i | "no"i | "eligible"i
+
 IDENTIFIER: /[a-zA-Z_][a-zA-Z0-9_]*/
-NUMBER: /[0-9]+(?:_[0-9]+)*(?:\.[0-9]+)?/
+NUMBER: /[0-9]+(?:\.[0-9]+)?/
+NUMBER_WITH_COMMAS: /[0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?/
 STRING: /"[^"]*"/ | /'[^']*'/
 
 %import common.WS
@@ -350,19 +372,504 @@ class CourgetteTransformer(Transformer):
     def num(self, value): 
         return Number(float(str(value).replace("_", "")))
     
+    def money_value(self, money):
+        # Extract number from money value
+        amount = str(money).replace('
+
+# Create parser instance
+_COURGETTE_PARSER = Lark(_COURGETTE_GRAMMAR, parser="lalr", transformer=CourgetteTransformer())
+
+# ---------------------------------------------------------------------------
+#  3. Enhanced Courgette Parser
+# ---------------------------------------------------------------------------
+
+class CourgetteParser:
+    """Enhanced parser for Courgette syntax with Australian terminology support"""
+    
+    # Outcome patterns - enhanced for natural language
+    _OUTCOME_PATTERNS = {
+        'eligibility': re.compile(r"(?i)^(.+?)\s+(?:is\s+)?(?:=|eligible|yes|true)$"),
+        'payment': re.compile(r"(?i)^payment\s+is\s+\$?([\d,._]+)(?:\s+per\s+(\w+))?"),
+        'base_rate': re.compile(r"(?i)^base rate is\s+\$?([\d,._]+)"),
+        'schedule': re.compile(r"(?i)rate is determined by (.+)"),
+        'reduction': re.compile(r"(?i)(?:payment\s+)?reduces? by ([\d.]+) cents per dollar over \$?([\d,._]+)"),
+        'threshold': re.compile(r"(?i)cut[- ]?out at \$?([\d,._]+)"),
+    }
+    
+    # Schedule entry pattern
+    _SCHEDULE_PATTERN = re.compile(
+        r"^When (.+?):\s*\$?([\d,._]+)(?:\s+per\s+(\w+))?",
+        re.IGNORECASE
+    )
+    
+    def parse(self, text: str) -> Tuple[List[Scenario], Dict[str, Definition], Dict[str, Schedule]]:
+        """Parse Courgette text into AST"""
+        definitions: Dict[str, Definition] = {}
+        schedules: Dict[str, Schedule] = {}
+        scenarios: List[Scenario] = []
+        
+        lines = [line.rstrip('\n') for line in text.strip().split('\n')]
+        i = 0
+        
+        while i < len(lines):
+            line = lines[i]
+            
+            if line.startswith("Scenario:"):
+                scenario, i = self._parse_scenario(lines, i, definitions, schedules)
+                scenarios.append(scenario)
+            elif line.startswith("Definition:"):
+                definition, i = self._parse_definition(lines, i)
+                definitions[definition.term] = definition
+            elif line.startswith("Schedule:"):
+                schedule, i = self._parse_schedule(lines, i)
+                schedules[schedule.name] = schedule
+            else:
+                i += 1
+        
+        return scenarios, definitions, schedules
+    
+    def _parse_definition(self, lines: List[str], start_idx: int) -> Tuple[Definition, int]:
+        """Parse a Definition block"""
+        term = lines[start_idx].split(":", 1)[1].strip()
+        idx = start_idx + 1
+        content_lines = []
+        
+        while idx < len(lines) and lines[idx].strip():
+            if lines[idx].startswith(("Scenario:", "Schedule:", "Definition:")):
+                break
+            content_lines.append(lines[idx].strip())
+            idx += 1
+        
+        content = " ".join(content_lines)
+        
+        # Try to parse as expression
+        try:
+            parsed_content = _COURGETTE_PARSER.parse(content)
+            return Definition(term, "expression", parsed_content), idx
+        except:
+            # Fallback to text definition
+            return Definition(term, "text", content), idx
+    
+    def _parse_schedule(self, lines: List[str], start_idx: int) -> Tuple[Schedule, int]:
+        """Parse a Schedule block"""
+        name = lines[start_idx].split(":", 1)[1].strip()
+        idx = start_idx + 1
+        entries = []
+        notes = []
+        
+        while idx < len(lines) and lines[idx].strip():
+            if lines[idx].startswith(("Scenario:", "Schedule:", "Definition:")):
+                break
+            
+            line = lines[idx].strip()
+            match = self._SCHEDULE_PATTERN.match(line)
+            
+            if match:
+                condition, amount, period = match.groups()
+                entries.append({
+                    'condition': condition,
+                    'amount': float(amount.replace(',', '').replace('_', '')),
+                    'period': period or 'fortnight'
+                })
+            elif line.startswith("Note:"):
+                notes.append(line[5:].strip())
+            
+            idx += 1
+        
+        return Schedule(name, "rates", entries, notes if notes else None), idx
+    
+    def _parse_scenario(self, lines: List[str], start_idx: int, 
+                       definitions: Dict[str, Definition], 
+                       schedules: Dict[str, Schedule]) -> Tuple[Scenario, int]:
+        """Parse a Scenario block"""
+        name = lines[start_idx].split(":", 1)[1].strip()
+        idx = start_idx + 1
+        
+        # Stack for handling nested conditions
+        condition_stack: List[RuleGroup] = [RuleGroup([], "all of")]
+        outcomes: List[Rule] = []
+        
+        while idx < len(lines):
+            line = lines[idx].rstrip()
+            if not line or line.startswith("Scenario:"):
+                break
+            
+            stripped = line.strip()
+            
+            # Handle conditions
+            if stripped.startswith(("When", "Given", "And", "Or")):
+                keyword, rest = stripped.split(" ", 1)
+                
+                # Check for group openers
+                if rest.endswith("these are true:") or rest.endswith("the following:"):
+                    operator = "any of" if "any of" in rest else "all of" if "all of" in rest else "none of"
+                    condition_stack.append(RuleGroup([], operator))
+                    idx += 1
+                    continue
+                
+                # Parse condition
+                try:
+                    expr = _COURGETTE_PARSER.parse(rest)
+                    rule = Rule(rest, expr)
+                    
+                    # Handle Or at same level
+                    if keyword == "Or" and condition_stack[-1].rules:
+                        # Create new "any of" group with previous and this condition
+                        last_rule = condition_stack[-1].rules.pop()
+                        or_group = RuleGroup([last_rule, rule], "any of")
+                        condition_stack[-1].rules.append(or_group)
+                    else:
+                        condition_stack[-1].rules.append(rule)
+                except Exception as e:
+                    # Fallback for unparseable conditions
+                    condition_stack[-1].rules.append(Rule(rest))
+                
+                idx += 1
+                continue
+            
+            # Handle list items
+            if stripped.startswith("- "):
+                condition_text = stripped[2:].strip()
+                try:
+                    expr = _COURGETTE_PARSER.parse(condition_text)
+                    condition_stack[-1].rules.append(Rule(condition_text, expr))
+                except:
+                    condition_stack[-1].rules.append(Rule(condition_text))
+                idx += 1
+                continue
+            
+            # Handle outcomes
+            if stripped.startswith(("Then", "And")) and any(
+                keyword in stripped.lower() 
+                for keyword in ['payment', 'rate', 'eligible', '=', 'is']
+            ):
+                # Close any open condition groups
+                while len(condition_stack) > 1:
+                    group = condition_stack.pop()
+                    condition_stack[-1].rules.append(group)
+                
+                # Parse outcome
+                _, outcome_text = stripped.split(" ", 1)
+                outcomes.append(self._parse_outcome(outcome_text))
+                idx += 1
+                continue
+            
+            idx += 1
+        
+        # Close remaining condition groups
+        while len(condition_stack) > 1:
+            group = condition_stack.pop()
+            condition_stack[-1].rules.append(group)
+        
+        return Scenario(name, condition_stack[0], outcomes, definitions, schedules), idx
+    
+    def _parse_outcome(self, text: str) -> Rule:
+        """Parse an outcome rule"""
+        for outcome_type, pattern in self._OUTCOME_PATTERNS.items():
+            match = pattern.match(text)
+            if match:
+                if outcome_type == 'eligibility':
+                    benefit = match.group(1).strip()
+                    return Rule(text, parsed={
+                        'type': 'eligibility',
+                        'benefit': benefit,
+                        'variable': benefit.lower().replace(' ', '_'),
+                        'value': True
+                    })
+                elif outcome_type == 'payment':
+                    amount, period = match.groups()
+                    return Rule(text, Calculation('fixed_payment', {
+                        'amount': float(amount.replace(',', '').replace('_', '')),
+                        'period': period or 'fortnight'
+                    }))
+                elif outcome_type == 'base_rate':
+                    amount = match.group(1)
+                    return Rule(text, Calculation('base_rate', {
+                        'amount': float(amount.replace(',', '').replace('_', ''))
+                    }))
+                elif outcome_type == 'schedule':
+                    schedule_name = match.group(1).strip()
+                    return Rule(text, Calculation('schedule_lookup', {
+                        'schedule': schedule_name
+                    }))
+                elif outcome_type == 'reduction':
+                    cents, threshold = match.groups()
+                    return Rule(text, Calculation('reduction', {
+                        'rate': float(cents) / 100,
+                        'threshold': float(threshold.replace(',', '').replace('_', ''))
+                    }))
+                elif outcome_type == 'threshold':
+                    cutout = match.group(1)
+                    return Rule(text, Calculation('threshold', {
+                        'cutout': float(cutout.replace(',', '').replace('_', ''))
+                    }))
+        
+        # Fallback for unrecognised outcomes
+        return Rule(text)
+
+# ---------------------------------------------------------------------------
+#  4. OpenFisca Code Generator
+# ---------------------------------------------------------------------------
+
+class OpenFiscaGenerator:
+    """Generate OpenFisca Python code from Courgette AST"""
+    
+    def __init__(self):
+        self.variable_types: Dict[str, str] = {}
+        self.generated_variables: Set[str] = set()
+    
+    def generate(self, scenarios: List[Scenario], 
+                definitions: Dict[str, Definition], 
+                schedules: Dict[str, Schedule]) -> str:
+        """Generate complete OpenFisca module"""
+        
+        # Header
+        code = f'''"""
+Generated OpenFisca implementation from Courgette rules
+Generated: {datetime.now().strftime("%d %B %Y")}
+
+This file implements eligibility rules and payment calculations
+for Australian social security benefits.
+"""
+
+from openfisca_core.model_api import *
+from openfisca_core.periods import MONTH, YEAR, ETERNITY, period
+
+
+'''
+        
+        # Generate entity definitions
+        code += self._generate_entities()
+        
+        # Generate variable definitions from AST analysis
+        code += self._generate_variable_definitions(scenarios, definitions)
+        
+        # Generate definition variables
+        for definition in definitions.values():
+            code += definition.to_openfisca_variable()
+        
+        # Generate scenario implementations
+        for scenario in scenarios:
+            code += scenario.to_openfisca_class()
+        
+        # Generate parameter file content separately
+        param_code = self._generate_parameters(schedules)
+        
+        return code, param_code
+    
+    def _generate_entities(self) -> str:
+        """Generate entity definitions"""
+        return '''
+class Person(Entity):
+    """An individual person"""
+    plural = "persons"
+    label = "Person"
+    doc = "An individual. The minimal legal entity on which a rule might be applied."
+
+
+class Family(Entity):
+    """A family unit for benefit calculations"""
+    plural = "families"
+    label = "Family"
+    doc = "A family unit as defined for social security purposes"
+    roles = [
+        {
+            "key": "parent",
+            "plural": "parents",
+            "label": "Parent",
+            "max": 2,
+        },
+        {
+            "key": "child",
+            "plural": "children", 
+            "label": "Child",
+        },
+    ]
+
+
+'''
+    
+    def _generate_variable_definitions(self, scenarios: List[Scenario], 
+                                     definitions: Dict[str, Definition]) -> str:
+        """Generate variable definitions based on usage analysis"""
+        variables = self._collect_all_variables(scenarios)
+        code = "# Base Variables\n\n"
+        
+        for var_name in sorted(variables):
+            if var_name not in self.generated_variables:
+                code += self._generate_single_variable(var_name)
+                self.generated_variables.add(var_name)
+        
+        return code + "\n"
+    
+    def _collect_all_variables(self, scenarios: List[Scenario]) -> Set[str]:
+        """Collect all variables used across scenarios"""
+        variables = set()
+        
+        for scenario in scenarios:
+            variables.update(scenario._extract_variables())
+        
+        return variables
+    
+    def _generate_single_variable(self, var_name: str) -> str:
+        """Generate a single variable definition"""
+        # Infer type from name patterns
+        var_type = self._infer_variable_type(var_name)
+        
+        # Special handling for common Australian benefit variables
+        if var_name in ['age', 'income', 'assets']:
+            entity = "Person"
+        elif 'family' in var_name or 'household' in var_name:
+            entity = "Family"
+        else:
+            entity = "Person"
+        
+        label = var_name.replace('_', ' ').title()
+        
+        return f'''
+class {var_name}(Variable):
+    value_type = {var_type}
+    entity = {entity}
+    definition_period = MONTH
+    label = "{label}"
+    
+
+'''
+    
+    def _infer_variable_type(self, var_name: str) -> str:
+        """Infer variable type from name"""
+        # Boolean indicators
+        if any(prefix in var_name for prefix in ['is_', 'has_', 'eligible']):
+            return "bool"
+        
+        # String types
+        if any(suffix in var_name for suffix in ['_status', '_type', '_category']):
+            return "str"
+        
+        # Enums for employment status
+        if var_name == "employment_status":
+            return "str"  # Could be enhanced to Enum
+        
+        # Numeric types
+        if any(keyword in var_name for keyword in ['age', 'income', 'amount', 'rate', 'payment', 'assets']):
+            return "float"
+        
+        # Default to float for unknowns
+        return "float"
+    
+    def _generate_parameters(self, schedules: Dict[str, Schedule]) -> str:
+        """Generate parameter YAML content"""
+        yaml = """# OpenFisca Parameters
+# Generated from Courgette schedules
+
+"""
+        
+        for schedule in schedules.values():
+            yaml += schedule.to_openfisca_parameter()
+            yaml += "\n"
+        
+        return yaml
+
+
+# ---------------------------------------------------------------------------
+#  5. Main execution and testing
+# ---------------------------------------------------------------------------
+
+def compile_courgette(source_text: str) -> Tuple[str, str]:
+    """
+    Compile Courgette source to OpenFisca code
+    Returns: (python_code, parameter_yaml)
+    """
+    parser = CourgetteParser()
+    generator = OpenFiscaGenerator()
+    
+    # Parse
+    scenarios, definitions, schedules = parser.parse(source_text)
+    
+    # Generate
+    python_code, param_yaml = generator.generate(scenarios, definitions, schedules)
+    
+    return python_code, param_yaml
+
+
+# Example usage and testing
+if __name__ == "__main__":
+    # Test with Australian benefits
+    sample_courgette = """
+Definition: assessable_income
+  The total of employment income, investment income, and deemed income from financial assets
+
+Definition: asset_value  
+  Total value of all assessable assets excluding the principal home
+
+Schedule: Age Pension Rates
+  When single: $1,096.70 per fortnight
+  When couple combined: $1,650.40 per fortnight
+  When couple separated by illness: $2,193.40 per fortnight
+
+Scenario: Age Pension
+  When age >= 67
+  And is_australian_resident == true
+  And residence_years >= 10
+  And any of these are true:
+    - assessable_income < 204
+    - asset_value < 301750
+  Then age_pension_eligible = true
+  And rate is determined by Age Pension Rates
+  And payment reduces by 50 cents per dollar over $204
+
+Scenario: Youth Allowance  
+  When age between 16 and 24
+  And any of these are true:
+    - is_student == true
+    - is_apprentice == true
+    - employment_status == "job_seeker"
+  And not is_independent
+  And parental_income < 60000
+  Then youth_allowance = true
+  And payment is $350.50 per fortnight
+"""
+    
+    python_code, param_yaml = compile_courgette(sample_courgette)
+    
+    print("=== Generated OpenFisca Code ===")
+    print(python_code)
+    print("\n=== Generated Parameters ===")
+    print(param_yaml)
+, '').replace(',', '')
+        return Number(float(amount))
+    
     def string(self, value): 
         # Remove quotes
         s = str(value)
         return String(s[1:-1] if s.startswith(('"', "'")) else s)
     
     def bool(self, value): 
-        return Boolean(str(value).lower() == "true")
+        v = str(value).lower()
+        return Boolean(v in ['true', 'yes', 'eligible'])
+    
+    def bool_var(self, var):
+        # Standalone variable implies == true
+        return Comparison(var, "==", Boolean(True))
     
     def simple_comp(self, left, op, right): 
         return Comparison(left, str(op), right)
     
     def is_comp(self, left, not_token, right):
         op = "!=" if not_token else "=="
+        return Comparison(left, op, right)
+    
+    def natural_comp(self, left, comp_phrase, right):
+        # Map natural language to operators
+        op_map = {
+            'lt': '<',
+            'gt': '>',
+            'gte': '>=',
+            'lte': '<=',
+            'eq': '==',
+            'ne': '!='
+        }
+        op = op_map.get(str(comp_phrase), '==')
         return Comparison(left, op, right)
     
     def between_comp(self, var, low, high):
@@ -379,6 +886,14 @@ class CourgetteTransformer(Transformer):
     
     def negate(self, expr):
         return LogicalExpression("not", [expr])
+    
+    # Natural language comparison phrases
+    def lt(self): return 'lt'
+    def gt(self): return 'gt'
+    def gte(self): return 'gte'
+    def lte(self): return 'lte'
+    def eq(self): return 'eq'
+    def ne(self): return 'ne'
 
 # Create parser instance
 _COURGETTE_PARSER = Lark(_COURGETTE_GRAMMAR, parser="lalr", transformer=CourgetteTransformer())

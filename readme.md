@@ -18,9 +18,9 @@ Courgette rules are a way of writing eligibility rules and calculations which ar
 ```courgette
 Scenario: Youth Allowance
   When age between 16 and 24
-  And is_student == true
-  And parental_income < 60000
-  Then youth_allowance_eligible = true
+  And is_student
+  And parental_income is less than $60,000
+  Then youth_allowance is eligible
   And payment is $350.50 per fortnight
 ```
 Easy to read right? 
@@ -83,8 +83,6 @@ A Courgette file consists of three types of blocks:
 2. **Schedules** - Payment rates and thresholds
 3. **Scenarios** - Eligibility rules and outcomes
 
-This mirrors the structure of social security legislation, allowing easy comparison of the plain language against the legislative text by all stakeholders.  Given its always compiling to OpenFisca, if a stakeholder signs off on the easy to read Courgette, then they've also signed off on the generated OpenFisca, even if they don't understand code. 
-
 ### Definitions
 
 Define terms that can be referenced throughout your rules:
@@ -122,7 +120,17 @@ Scenario: [Benefit Name]
 
 ## Conditions
 
-### Comparison Operators
+### Natural Language Comparisons
+
+```courgette
+When age is at least 67                    # >= 67
+And income is less than $20,000            # < 20000
+And assets are no more than $500,000       # <= 500000
+And hours is greater than 15               # > 15
+And age is not equal to 16                 # != 16
+```
+
+### Code-Style Operators (Still Supported)
 
 ```courgette
 When age >= 67                    # Greater than or equal
@@ -143,9 +151,17 @@ And income between 0 and 50000   # Any numeric range
 ### Boolean Conditions
 
 ```courgette
-When is_student == true          # Explicit boolean
-And studying                     # Implicit true (coming soon)
-And not working_full_time        # Negation
+When is_student                     # Implicit true
+And not working_full_time           # Negation
+And has_dependent_children          # Natural readable form
+```
+
+Or be explicit if preferred:
+
+```courgette
+When is_student is true
+And is_australian_resident is yes
+And youth_allowance is eligible
 ```
 
 ### Logical Operators
@@ -189,8 +205,9 @@ And none of these are true:
 ### Eligibility
 
 ```courgette
-Then youth_allowance_eligible = true
-Then age_pension = true
+Then youth_allowance is eligible
+Then age_pension is yes
+Then family_tax_benefit_part_a is true
 ```
 
 ### Fixed Payments
@@ -229,10 +246,10 @@ And payment reduces by 30 cents per dollar over $103,368
 
 ```courgette
 Scenario: Senior Card
-  When age >= 60
-  And working_hours <= 20
-  And is_australian_resident == true
-  Then senior_card_eligible = true
+  When age is at least 60
+  And working_hours is at most 20
+  And is_australian_resident
+  Then senior_card is eligible
 ```
 
 ### Complex Payment Calculation
@@ -248,12 +265,12 @@ Schedule: JobSeeker Base Rates
 
 Scenario: JobSeeker Payment
   When age between 22 and age_pension_age
-  And is_australian_resident == true
+  And is_australian_resident
   And any of these are true:
-    - employment_status == "unemployed"
-    - employment_hours < 15
-  And income < 1356.99
-  Then jobseeker_payment_eligible = true
+    - employment_status is "unemployed"
+    - employment_hours is less than 15
+  And income is less than $1,356.99
+  Then jobseeker_payment is eligible
   And rate is determined by JobSeeker Base Rates
   And payment reduces by 50 cents per dollar over $150
   And payment reduces by 60 cents per dollar over $256
@@ -288,7 +305,6 @@ Scenario: Family Tax Benefit Part B
   And rate is determined by FTB Part B Rates
   And payment reduces by 20 cents per dollar over $5,767
 ```
-
 ## Style Guide
 
 ### Proper English
@@ -302,7 +318,6 @@ Where possible courgette supports Australian spelling and terminology:
 ### Naming Conventions
 
 **Variables**: Use snake_case
-just adding the underline automatically turns it into a variable
 ```courgette
 is_australian_resident
 has_dependent_children

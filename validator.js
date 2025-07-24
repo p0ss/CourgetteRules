@@ -300,6 +300,28 @@ function validateCourgette(text) {
  * Validate a condition expression
  */
 function validateCondition(condition, lineNum, columnOffset, errors, lines, lineIdx) {
+    // Check for natural language operators
+    const naturalOperators = [
+        'is less than', 'is greater than', 'is at least', 'is at most',
+        'is more than', 'is no more than', 'is no less than', 
+        'is equal to', 'is not equal to', 'is not', 'is'
+    ];
+    
+    // Check for code-style operators
+    const codeOperators = ['==', '!=', '<=', '>=', '<', '>'];
+    
+    // Check for special constructs
+    const specialConstructs = ['between', 'and'];
+    
+    const hasNaturalOp = naturalOperators.some(op => 
+        condition.toLowerCase().includes(op)
+    );
+    
+    const hasCodeOp = codeOperators.some(op => {
+        const regex = new RegExp(`\\s*${op.replace(/[<>=]/g, '\\/**
+ * Validate a condition expression
+ */
+function validateCondition(condition, lineNum, columnOffset, errors, lines, lineIdx) {
     // Check for common operators
     const operators = ['==', '!=', '<=', '>=', '<', '>', 'between', 'is', 'not'];
     const hasOperator = operators.some(op => {
@@ -362,6 +384,176 @@ function validateCondition(condition, lineNum, columnOffset, errors, lines, line
                     startOffset: getOffset(lines, lineIdx, columnOffset - 1 + boolPos),
                     endOffset: getOffset(lines, lineIdx, columnOffset - 1 + boolPos + bool.length)
                 });
+            }
+        });
+    }
+}')}\\s*`);
+        return regex.test(condition);
+    });
+    
+    const hasBetween = /\bbetween\b/i.test(condition);
+    
+    // Allow standalone boolean variables
+    const isStandaloneBoolean = /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(condition.trim());
+    
+    if (!hasNaturalOp && !hasCodeOp && !hasBetween && !isStandaloneBoolean && condition !== '') {
+        errors.push({
+            line: lineNum,
+            column: columnOffset,
+            message: 'Condition missing comparison (e.g., "is less than", "<", "between")',
+            severity: 'error',
+            startOffset: getOffset(lines, lineIdx, columnOffset - 1),
+            endOffset: getOffset(lines, lineIdx, columnOffset - 1 + condition.length)
+        });
+        return;
+    }
+    
+    // Validate between syntax
+    if (hasBetween) {
+        const betweenMatch = condition.match(/(\w+)\s+between\s+(.+?)\s+and\s+(.+)/i);
+        if (!betweenMatch) {
+            const betweenPos = condition.toLowerCase().indexOf('between');
+            errors.push({
+                line: lineNum,
+                column: columnOffset + betweenPos,
+                message: 'Invalid "between" syntax. Use: variable between X and Y',
+                severity: 'error',
+                startOffset: getOffset(lines, lineIdx, columnOffset - 1 + betweenPos),
+                endOffset: getOffset(lines, lineIdx, columnOffset - 1 + betweenPos + 7)
+            });
+        }
+    }
+    
+    // Check for unmatched quotes
+    const quotes = condition.match(/["']/g) || [];
+    if (quotes.length % 2 !== 0) {
+        errors.push({
+            line: lineNum,
+            column: columnOffset,
+            message: 'Unmatched quotes in condition',
+            severity: 'error',
+            startOffset: getOffset(lines, lineIdx, columnOffset - 1),
+            endOffset: getOffset(lines, lineIdx, columnOffset - 1 + condition.length)
+        });
+    }
+    
+    // Validate money values have $ symbol
+    const moneyMatch = condition.match(/\b(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\b/g);
+    if (moneyMatch) {
+        moneyMatch.forEach(amount => {
+            if (parseFloat(amount.replace(/,/g, '')) >= 1000) {
+                const amountPos = condition.indexOf(amount);
+                const hasDollar = condition.substring(Math.max(0, amountPos - 2), amountPos).includes('
+
+/**
+ * Validate an outcome expression
+ */
+function validateOutcome(outcome, lineNum, columnOffset, errors, lines, lineIdx, schedules) {
+    // Check for eligibility outcomes
+    if (outcome.match(/\w+\s*=\s*true/i) || outcome.match(/\w+\s+is\s+eligible/i)) {
+        // Valid eligibility outcome
+        return;
+    }
+    
+    // Check for payment outcomes
+    if (outcome.match(/payment\s+is\s+\$?[\d,._]+/i)) {
+        const amountMatch = outcome.match(/\$?([\d,._]+)/);
+        if (amountMatch) {
+            const amount = amountMatch[1];
+            if (!/^\d+(?:[,._]\d+)*(?:\.\d+)?$/.test(amount)) {
+                const amountPos = outcome.indexOf(amount);
+                errors.push({
+                    line: lineNum,
+                    column: columnOffset + amountPos,
+                    message: 'Invalid payment amount format',
+                    severity: 'error',
+                    startOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos),
+                    endOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos + amount.length)
+                });
+            }
+        }
+        return;
+    }
+    
+    // Check for schedule references
+    if (outcome.match(/rate\s+is\s+determined\s+by\s+(.+)/i)) {
+        const scheduleMatch = outcome.match(/rate\s+is\s+determined\s+by\s+(.+)/i);
+        const scheduleName = scheduleMatch[1].trim();
+        
+        if (!schedules.has(scheduleName)) {
+            const schedulePos = outcome.indexOf(scheduleName);
+            errors.push({
+                line: lineNum,
+                column: columnOffset + schedulePos,
+                message: `Schedule '${scheduleName}' not defined`,
+                severity: 'error',
+                startOffset: getOffset(lines, lineIdx, columnOffset - 1 + schedulePos),
+                endOffset: getOffset(lines, lineIdx, columnOffset - 1 + schedulePos + scheduleName.length)
+            });
+        }
+        return;
+    }
+    
+    // Check for reduction rules
+    if (outcome.match(/reduces?\s+by\s+\d+\s+cents?\s+per\s+dollar/i)) {
+        return;
+    }
+    
+    // Unknown outcome format
+    errors.push({
+        line: lineNum,
+        column: columnOffset,
+        message: 'Unrecognised outcome format',
+        severity: 'warning',
+        startOffset: getOffset(lines, lineIdx, columnOffset - 1),
+        endOffset: getOffset(lines, lineIdx, columnOffset - 1 + outcome.length)
+    });
+}
+
+/**
+ * Extract variable names from a condition
+ */
+function extractVariables(condition, variables) {
+    // Simple pattern to extract potential variable names
+    const varPattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
+    let match;
+    
+    while ((match = varPattern.exec(condition)) !== null) {
+        const varName = match[1];
+        // Exclude keywords and boolean values
+        if (!['and', 'or', 'not', 'between', 'is', 'true', 'false'].includes(varName.toLowerCase())) {
+            variables.add(varName);
+        }
+    }
+}
+
+/**
+ * Calculate character offset in the full text
+ */
+function getOffset(lines, lineIdx, column) {
+    let offset = 0;
+    for (let i = 0; i < lineIdx; i++) {
+        offset += lines[i].length + 1; // +1 for newline
+    }
+    return offset + column;
+}
+
+// Web Worker message handling
+self.addEventListener('message', (event) => {
+    const { text } = event.data;
+    const errors = validateCourgette(text);
+    self.postMessage({ errors });
+}););
+                if (!hasDollar) {
+                    errors.push({
+                        line: lineNum,
+                        column: columnOffset + amountPos,
+                        message: `Consider using $ for monetary amounts: ${amount}`,
+                        severity: 'warning',
+                        startOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos),
+                        endOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos + amount.length)
+                    });
+                }
             }
         });
     }
