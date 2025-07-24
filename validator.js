@@ -559,8 +559,7 @@ function extractVariables(condition, variables) {
         const varName = match[1];
         // Exclude keywords and boolean values
         const excludeWords = [
-            'and', 'or', 'not', 'between', 'is', 'true', 'false', 'yes', 'no', 'eligible',
-            'less', 'greater', 'than', 'at', 'least', 'most', 'more', 'equal', 'to'
+            'and', 'or', 'not', 'between', 'is', 'true', 'false', 'yes', 'no', 'eligible', 'less', 'greater', 'than', 'at', 'least', 'most', 'more', 'equal', 'to'
         ];
         
         if (!excludeWords.includes(varName.toLowerCase())) {
