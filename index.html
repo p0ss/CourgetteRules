@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Courgette Method – Legislation to OpenFisca</title>
+
+  <!-- Agriculture Design System core stylesheet -->
+  <link rel="stylesheet" href="https://design-system.agriculture.gov.au/latest/agds.css" />
+
+  <!-- Quill core -->
+  <link href="https://cdn.jsdelivr.net/npm/quill@2.0.0/dist/quill.snow.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/quill@2.0.0/dist/quill.min.js"></script>
+
+  <style>
+    /* Error highlighting */
+    .ql-editor .error {
+      text-decoration: red wavy underline;
+      text-decoration-skip-ink: none;
+    }
+    
+    /* Custom blot styles */
+    .ql-editor h2.scenario {
+      color: var(--ag-foreground-action);
+      font-weight: 600;
+      margin: 1.5rem 0 0.5rem;
+    }
+    
+    .ql-editor h3.definition {
+      color: var(--ag-foreground-info);
+      font-weight: 600;
+      margin: 1.5rem 0 0.5rem;
+    }
+    
+    .ql-editor h3.schedule {
+      color: var(--ag-foreground-success);
+      font-weight: 600;
+      margin: 1.5rem 0 0.5rem;
+    }
+    
+    /* Layout */
+    .editor-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2rem;
+      margin-top: 2rem;
+    }
+    
+    @media (max-width: 768px) {
+      .editor-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+    
+    /* Code view */
+    .code-view {
+      background: #f6f8fa;
+      border: 1px solid var(--ag-border);
+      padding: 1rem;
+      overflow-x: auto;
+      font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+      font-size: 0.875rem;
+      line-height: 1.6;
+      height: 60vh;
+      overflow-y: auto;
+    }
+    
+    /* Editor container */
+    #editor {
+      height: 60vh;
+      font-size: 1rem;
+      line-height: 1.6;
+    }
+    
+    /* Toolbar customisation */
+    .ql-toolbar {
+      background: var(--ag-background-body-alt);
+      border-color: var(--ag-border);
+      padding: 0.75rem;
+    }
+    
+    .courgette-buttons {
+      margin-left: 1rem;
+      padding-left: 1rem;
+      border-left: 1px solid var(--ag-border);
+      display: inline-flex;
+      gap: 0.5rem;
+    }
+    
+    .courgette-buttons button {
+      font-size: 0.875rem;
+    }
+    
+    /* Status bar */
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.5rem 1rem;
+      background: var(--ag-background-body-alt);
+      border-top: 1px solid var(--ag-border);
+      font-size: 0.875rem;
+    }
+    
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .status-indicator .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--ag-foreground-muted);
+    }
+    
+    .status-indicator.valid .dot {
+      background: var(--ag-foreground-success);
+    }
+    
+    .status-indicator.error .dot {
+      background: var(--ag-foreground-error);
+    }
+    
+    /* Error panel */
+    .error-panel {
+      margin-top: 1rem;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+    
+    .error-item {
+      padding: 0.5rem;
+      border-left: 3px solid var(--ag-foreground-error);
+      background: var(--ag-background-body-alt);
+      margin-bottom: 0.5rem;
+      font-size: 0.875rem;
+    }
+    
+    /* Examples sidebar */
+    .examples-panel {
+      position: fixed;
+      right: -350px;
+      top: 0;
+      width: 350px;
+      height: 100vh;
+      background: white;
+      box-shadow: -2px 0 8px rgba(0,0,0,0.1);
+      z-index: 1000;
+      transition: right 0.3s ease;
+      overflow-y: auto;
+    }
+    
+    .examples-panel.open {
+      right: 0;
+    }
+    
+    .examples-header {
+      padding: 1rem;
+      border-bottom: 1px solid var(--ag-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .example-item {
+      padding: 1rem;
+      border-bottom: 1px solid var(--ag-border);
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    
+    .example-item:hover {
+      background: var(--ag-background-body-alt);
+    }
+    
+    .example-item h4 {
+      margin: 0 0 0.5rem 0;
+      color: var(--ag-foreground-action);
+    }
+    
+    .example-item p {
+      margin: 0;
+      font-size: 0.875rem;
+      color: var(--ag-foreground-muted);
+    }
+  </style>
+</head>
+<body>
+  <!-- AGDS Header -->
+  <header class="au-header au-header--dark">
+    <div class="container">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <h1 class="au-header__title">Courgette Method <small class="au-display-xs">alpha</small></h1>
+        <nav>
+          <button class="au-btn au-btn--secondary au-btn--small" onclick="toggleExamples()">
+            Examples
+          </button>
+        </nav>
+      </div>
+    </div>
+  </header>
+
+  <main class="container au-body">
+    <div class="editor-layout">
+      <!-- LEFT: Courgette editor -->
+      <section class="au-card">
+        <div class="au-card__inner">
+          <h2 class="au-display-md">Draft rules</h2>
+          <p class="au-body au-body--small">Write your eligibility rules in plain English using the Courgette syntax.</p>
+        </div>
+        <div id="toolbar"></div>
+        <div id="editor"></div>
+        <div class="status-bar">
+          <div class="status-indicator" id="status">
+            <span class="dot"></span>
+            <span>Ready</span>
+          </div>
+          <div>
+            <span id="wordCount">0 words</span>
+          </div>
+        </div>
+        <div id="errorPanel" class="error-panel au-card__inner" style="display: none;"></div>
+      </section>
+
+      <!-- RIGHT: Generated OpenFisca code -->
+      <section class="au-card">
+        <div class="au-card__inner">
+          <h2 class="au-display-md">Generated OpenFisca</h2>
+          <p class="au-body au-body--small">Python code ready for OpenFisca implementation.</p>
+        </div>
+        <pre id="code" class="code-view au-card__inner"># OpenFisca code will appear here...</pre>
+      </section>
+    </div>
+  </main>
+
+  <!-- Examples Panel -->
+  <div class="examples-panel" id="examplesPanel">
+    <div class="examples-header">
+      <h3>Example Rules</h3>
+      <button class="au-btn au-btn--tertiary au-btn--small" onclick="toggleExamples()">
+        Close
+      </button>
+    </div>
+    <div class="example-item" onclick="loadExample('youth_allowance')">
+      <h4>Youth Allowance</h4>
+      <p>Basic eligibility rules for young people studying or seeking work.</p>
+    </div>
+    <div class="example-item" onclick="loadExample('family_tax_benefit')">
+      <h4>Family Tax Benefit</h4>
+      <p>Complex rules with schedules and income tests.</p>
+    </div>
+    <div class="example-item" onclick="loadExample('age_pension')">
+      <h4>Age Pension</h4>
+      <p>Comprehensive example with assets and income tests.</p>
+    </div>
+  </div>
+
+  <!-- Web Worker for validation -->
+  <script id="validation-worker" type="javascript/worker">
+    // Simple validation rules
+    const validateCourgette = (text) => {
+      const errors = [];
+      const lines = text.split('\n');
+      
+      let inScenario = false;
+      let hasConditions = false;
+      let hasOutcomes = false;
+      
+      lines.forEach((line, idx) => {
+        const trimmed = line.trim();
+        
+        // Check for scenario structure
+        if (trimmed.startsWith('Scenario:')) {
+          if (inScenario && !hasOutcomes) {
+            errors.push({
+              line: idx,
+              message: 'Previous scenario missing "Then" outcomes'
+            });
+          }
+          inScenario = true;
+          hasConditions = false;
+          hasOutcomes = false;
+        }
+        
+        if (inScenario) {
+          if (trimmed.startsWith('When') || trimmed.startsWith('Given')) {
+            hasConditions = true;
+          }
+          if (trimmed.startsWith('Then')) {
+            if (!hasConditions) {
+              errors.push({
+                line: idx + 1,
+                message: 'Scenario must have conditions before outcomes'
+              });
+            }
+            hasOutcomes = true;
+          }
+        }
+        
+        // Check for common syntax errors
+        if (trimmed.includes('==') && !trimmed.match(/\w+\s*==\s*["'\w]+/)) {
+          errors.push({
+            line: idx + 1,
+            message: 'Invalid comparison syntax'
+          });
+        }
+      });
+      
+      return errors;
+    };
+    
+    self.addEventListener('message', (e) => {
+      const errors = validateCourgette(e.data);
+      self.postMessage(errors);
+    });
+  </script>
+
+  <!-- Main JavaScript -->
+  <script>
+    // Create validation worker
+    const workerBlob = new Blob([document.getElementById('validation-worker').textContent], { type: 'application/javascript' });
+    const validationWorker = new Worker(URL.createObjectURL(workerBlob));
+
+    // Quill custom blots
+    const Block = Quill.import('blots/block');
+    const Inline = Quill.import('blots/inline');
+
+    // Scenario blot
+    class ScenarioBlot extends Block {
+      static blotName = 'scenario';
+      static tagName = 'h2';
+      static className = 'scenario';
+      
+      static create(value) {
+        const node = super.create();
+        node.setAttribute('data-scenario', value);
+        node.innerText = `Scenario: ${value}`;
+        return node;
+      }
+      
+      static formats(node) {
+        return node.getAttribute('data-scenario');
+      }
+    }
+
+    // Definition blot
+    class DefinitionBlot extends Block {
+      static blotName = 'definition';
+      static tagName = 'h3';
+      static className = 'definition';
+      
+      static create(value) {
+        const node = super.create();
+        node.setAttribute('data-definition', value);
+        node.innerText = `Definition: ${value}`;
+        return node;
+      }
+      
+      static formats(node) {
+        return node.getAttribute('data-definition');
+      }
+    }
+
+    // Schedule blot
+    class ScheduleBlot extends Block {
+      static blotName = 'schedule';
+      static tagName = 'h3';
+      static className = 'schedule';
+      
+      static create(value) {
+        const node = super.create();
+        node.setAttribute('data-schedule', value);
+        node.innerText = `Schedule: ${value}`;
+        return node;
+      }
+      
+      static formats(node) {
+        return node.getAttribute('data-schedule');
+      }
+    }
+
+    // Error inline blot
+    class ErrorBlot extends Inline {
+      static blotName = 'error';
+      static tagName = 'span';
+      static className = 'error';
+    }
+
+    // Register all blots
+    Quill.register(ScenarioBlot);
+    Quill.register(DefinitionBlot);
+    Quill.register(ScheduleBlot);
+    Quill.register(ErrorBlot);
+
+    // Initialise Quill
+    const quill = new Quill('#editor', {
+      theme: 'snow',
+      modules: {
+        toolbar: {
+          container: [
+            [{ header: [2, 3, false] }],
+            ['bold', 'italic'],
+            [{ list: 'bullet' }],
+            [{ 'indent': '-1' }, { 'indent': '+1' }],
+            ['clean']
+          ]
+        }
+      },
+      placeholder: 'Start writing your rules here...'
+    });
+
+    // Add custom buttons to toolbar
+    const toolbar = quill.getModule('toolbar').container;
+    const customButtons = document.createElement('div');
+    customButtons.className = 'courgette-buttons';
+    
+    // Scenario button
+    const scenarioBtn = document.createElement('button');
+    scenarioBtn.innerText = 'Add Scenario';
+    scenarioBtn.className = 'au-btn au-btn--small';
+    scenarioBtn.onclick = () => {
+      const name = prompt('Scenario name:');
+      if (name) {
+        const range = quill.getSelection(true);
+        quill.insertEmbed(range.index, 'scenario', name, Quill.sources.USER);
+        quill.insertText(range.index + 1, '\n  When ', Quill.sources.USER);
+        quill.setSelection(range.index + 8, Quill.sources.USER);
+      }
+    };
+    customButtons.appendChild(scenarioBtn);
+
+    // Definition button
+    const defBtn = document.createElement('button');
+    defBtn.innerText = 'Add Definition';
+    defBtn.className = 'au-btn au-btn--small au-btn--secondary';
+    defBtn.onclick = () => {
+      const name = prompt('Definition term:');
+      if (name) {
+        const range = quill.getSelection(true);
+        quill.insertEmbed(range.index, 'definition', name, Quill.sources.USER);
+        quill.insertText(range.index + 1, '\n  ', Quill.sources.USER);
+        quill.setSelection(range.index + 3, Quill.sources.USER);
+      }
+    };
+    customButtons.appendChild(defBtn);
+
+    // Schedule button
+    const schedBtn = document.createElement('button');
+    schedBtn.innerText = 'Add Schedule';
+    schedBtn.className = 'au-btn au-btn--small au-btn--secondary';
+    schedBtn.onclick = () => {
+      const name = prompt('Schedule name:');
+      if (name) {
+        const range = quill.getSelection(true);
+        quill.insertEmbed(range.index, 'schedule', name, Quill.sources.USER);
+        quill.insertText(range.index + 1, '\n  When ', Quill.sources.USER);
+        quill.setSelection(range.index + 8, Quill.sources.USER);
+      }
+    };
+    customButtons.appendChild(schedBtn);
+
+    toolbar.appendChild(customButtons);
+
+    // Convert Quill delta to Courgette text
+    function deltaToCourgette(delta) {
+      let text = '';
+      let currentLine = '';
+      
+      delta.ops.forEach(op => {
+        if (op.insert) {
+          if (op.attributes && op.attributes.scenario) {
+            if (currentLine) text += currentLine + '\n';
+            text += `Scenario: ${op.attributes.scenario}\n`;
+            currentLine = '';
+          } else if (op.attributes && op.attributes.definition) {
+            if (currentLine) text += currentLine + '\n';
+            text += `Definition: ${op.attributes.definition}\n`;
+            currentLine = '';
+          } else if (op.attributes && op.attributes.schedule) {
+            if (currentLine) text += currentLine + '\n';
+            text += `Schedule: ${op.attributes.schedule}\n`;
+            currentLine = '';
+          } else if (typeof op.insert === 'string') {
+            const lines = op.insert.split('\n');
+            currentLine += lines[0];
+            for (let i = 1; i < lines.length; i++) {
+              text += currentLine + '\n';
+              currentLine = lines[i];
+            }
+          }
+        }
+      });
+      
+      if (currentLine) text += currentLine;
+      return text;
+    }
+
+    // Courgette to OpenFisca compiler
+    function compileToOpenFisca(courgette) {
+      const lines = courgette.split('\n');
+      let output = `"""
+Generated OpenFisca code from Courgette rules
+Created: ${new Date().toLocaleDateString('en-AU')}
+"""
+
+from openfisca_core.model_api import *
+from openfisca_core.periods import MONTH, YEAR, ETERNITY
+
+`;
+      
+      let currentScenario = null;
+      let currentDefinition = null;
+      let currentSchedule = null;
+      let variables = new Set();
+      let conditions = [];
+      let outcomes = [];
+      
+      lines.forEach(line => {
+        const trimmed = line.trim();
+        
+        if (trimmed.startsWith('Scenario:')) {
+          // Process previous scenario
+          if (currentScenario) {
+            output += generateScenarioCode(currentScenario, conditions, outcomes, variables);
+          }
+          
+          currentScenario = trimmed.substring(9).trim();
+          conditions = [];
+          outcomes = [];
+          
+        } else if (trimmed.startsWith('Definition:')) {
+          currentDefinition = trimmed.substring(11).trim();
+          
+        } else if (trimmed.startsWith('Schedule:')) {
+          currentSchedule = trimmed.substring(9).trim();
+          
+        } else if (currentScenario) {
+          // Parse conditions and outcomes
+          if (trimmed.startsWith('When') || trimmed.startsWith('Given') || trimmed.startsWith('And')) {
+            const condition = trimmed.replace(/^(When|Given|And)\s+/, '');
+            if (condition && !condition.includes(':')) {
+              conditions.push(parseCondition(condition));
+              extractVariables(condition, variables);
+            }
+          } else if (trimmed.startsWith('Then')) {
+            const outcome = trimmed.replace(/^Then\s+/, '');
+            outcomes.push(parseOutcome(outcome));
+          } else if (trimmed.startsWith('-')) {
+            // List item
+            const item = trimmed.substring(1).trim();
+            conditions.push(parseCondition(item));
+            extractVariables(item, variables);
+          }
+        }
+      });
+      
+      // Process final scenario
+      if (currentScenario) {
+        output += generateScenarioCode(currentScenario, conditions, outcomes, variables);
+      }
+      
+      // Generate variable definitions
+      output = generateVariableDefinitions(variables) + '\n\n' + output;
+      
+      return output;
+    }
+
+    function parseCondition(condition) {
+      // Convert plain English conditions to Python
+      return condition
+        .replace(/\s*==\s*/g, ' == ')
+        .replace(/\s*!=\s*/g, ' != ')
+        .replace(/\s*<=\s*/g, ' <= ')
+        .replace(/\s*>=\s*/g, ' >= ')
+        .replace(/\s*<\s*/g, ' < ')
+        .replace(/\s*>\s*/g, ' > ')
+        .replace(/\sbetween\s+(\S+)\s+and\s+(\S+)/g, ' >= $1 and _ <= $2')
+        .replace(/true/gi, 'True')
+        .replace(/false/gi, 'False')
+        .replace(/"([^"]+)"/g, "'$1'");
+    }
+
+    function parseOutcome(outcome) {
+      // Extract eligibility and payment rules
+      const eligibilityMatch = outcome.match(/(\w+)\s*=\s*true/i);
+      if (eligibilityMatch) {
+        return {
+          type: 'eligibility',
+          variable: eligibilityMatch[1],
+          value: true
+        };
+      }
+      
+      const paymentMatch = outcome.match(/payment\s+is\s+\$?([\d,._]+)(?:\s+per\s+(\w+))?/i);
+      if (paymentMatch) {
+        return {
+          type: 'payment',
+          amount: parseFloat(paymentMatch[1].replace(/[,_]/g, '')),
+          period: paymentMatch[2] || 'fortnight'
+        };
+      }
+      
+      return { type: 'unknown', text: outcome };
+    }
+
+    function extractVariables(text, variables) {
+      // Extract variable names from conditions
+      const matches = text.match(/\b[a-zA-Z_]\w*\b/g);
+      if (matches) {
+        matches.forEach(match => {
+          if (!['true', 'false', 'and', 'or', 'not', 'between'].includes(match.toLowerCase())) {
+            variables.add(match);
+          }
+        });
+      }
+    }
+
+    function generateVariableDefinitions(variables) {
+      let code = '# Variable definitions\n';
+      
+      variables.forEach(variable => {
+        const varType = guessVariableType(variable);
+        code += `
+class ${variable}(Variable):
+    value_type = ${varType}
+    entity = Person
+    definition_period = MONTH
+    label = "${variable.replace(/_/g, ' ')}"
+`;
+      });
+      
+      return code;
+    }
+
+    function guessVariableType(variable) {
+      if (variable.includes('age') || variable.includes('income') || variable.includes('amount')) {
+        return 'float';
+      }
+      if (variable.includes('is_') || variable.includes('has_') || variable.includes('eligible')) {
+        return 'bool';
+      }
+      if (variable.includes('status') || variable.includes('type')) {
+        return 'str';
+      }
+      return 'float';
+    }
+
+    function generateScenarioCode(name, conditions, outcomes, variables) {
+      const className = name.replace(/\s+/g, '_').toLowerCase();
+      let code = `
+class ${className}_eligible(Variable):
+    value_type = bool
+    entity = Person
+    definition_period = MONTH
+    label = "${name} eligibility"
+    
+    def formula(person, period, parameters):
+`;
+      
+      // Generate condition checks
+      conditions.forEach(condition => {
+        const varMatch = condition.match(/^(\w+)/);
+        if (varMatch) {
+          code += `        ${varMatch[1]} = person('${varMatch[1]}', period)\n`;
+        }
+      });
+      
+      code += '\n        eligible = (\n';
+      conditions.forEach((condition, idx) => {
+        const pythonCondition = condition
+          .replace(/(\w+)/, '$1')
+          .replace(/\s*_\s*/, ` person('${className}_eligible', period) `);
+        code += `            ${idx > 0 ? 'and ' : ''}(${pythonCondition})\n`;
+      });
+      code += '        )\n\n';
+      
+      // Generate outcomes
+      outcomes.forEach(outcome => {
+        if (outcome.type === 'eligibility') {
+          code += `        return eligible\n`;
+        }
+      });
+      
+      // Generate payment calculation if applicable
+      const paymentOutcome = outcomes.find(o => o.type === 'payment');
+      if (paymentOutcome) {
+        code += `
+
+class ${className}_payment(Variable):
+    value_type = float
+    entity = Person
+    definition_period = MONTH
+    label = "${name} payment amount"
+    
+    def formula(person, period, parameters):
+        eligible = person('${className}_eligible', period)
+        return eligible * ${paymentOutcome.amount}
+`;
+      }
+      
+      return code;
+    }
+
+    // Update functions
+    let updateTimer;
+    function scheduleUpdate() {
+      clearTimeout(updateTimer);
+      updateTimer = setTimeout(updateEditor, 300);
+    }
+
+    function updateEditor() {
+      const courgetteText = deltaToCourgette(quill.getContents());
+      
+      // Update word count
+      const wordCount = courgetteText.trim().split(/\s+/).filter(w => w.length > 0).length;
+      document.getElementById('wordCount').textContent = `${wordCount} words`;
+      
+      // Validate
+      validationWorker.postMessage(courgetteText);
+      
+      // Compile
+      try {
+        const openfiscaCode = compileToOpenFisca(courgetteText);
+        document.getElementById('code').textContent = openfiscaCode;
+      } catch (error) {
+        document.getElementById('code').textContent = `# Compilation error\n# ${error.message}`;
+      }
+    }
+
+    // Handle validation results
+    validationWorker.addEventListener('message', (e) => {
+      const errors = e.data;
+      const status = document.getElementById('status');
+      const errorPanel = document.getElementById('errorPanel');
+      
+      if (errors.length === 0) {
+        status.className = 'status-indicator valid';
+        status.querySelector('span:last-child').textContent = 'Valid';
+        errorPanel.style.display = 'none';
+      } else {
+        status.className = 'status-indicator error';
+        status.querySelector('span:last-child').textContent = `${errors.length} error${errors.length > 1 ? 's' : ''}`;
+        
+        errorPanel.innerHTML = errors.map(err => 
+          `<div class="error-item">Line ${err.line}: ${err.message}</div>`
+        ).join('');
+        errorPanel.style.display = 'block';
+      }
+    });
+
+    // Example management
+    const examples = {
+      youth_allowance: `Scenario: Youth Allowance
+  When age < 25
+  And any of these are true:
+    - studying == true
+    - employment_status == "unemployed"
+  And income < 20000
+  Then youth_allowance = true
+  And payment is $350.50 per fortnight`,
+      
+      family_tax_benefit: `Definition: secondary_earner_income
+  The lower of partner A income and partner B income
+
+Schedule: FTB Part B Maximum Rates
+  When youngest_child_age < 5: $161.55 per fortnight
+  When youngest_child_age between 5 and 18: $112.55 per fortnight
+
+Scenario: Family Tax Benefit Part B
+  When is_couple == true
+  And has_dependent_children == true
+  And secondary_earner_income between 5767 and 28671
+  Then family_tax_benefit_part_b = true
+  And rate is determined by FTB Part B Maximum Rates
+  And payment reduces by 20 cents per dollar over $5,767`,
+      
+      age_pension: `Definition: assessable_income
+  Total of employment income, investment income, and deemed income from financial assets
+
+Definition: asset_value
+  Total value of all assessable assets excluding principal home
+
+Scenario: Age Pension
+  When age >= 67
+  And is_australian_resident == true
+  And residence_years >= 10
+  And assessable_income < 2115.40
+  And asset_value < 419000
+  Then age_pension = true
+  And payment is $1096.70 per fortnight
+  And payment reduces by 50 cents per dollar over $204`
+    };
+
+    function toggleExamples() {
+      const panel = document.getElementById('examplesPanel');
+      panel.classList.toggle('open');
+    }
+
+    function loadExample(key) {
+      if (examples[key]) {
+        quill.setText(examples[key]);
+        toggleExamples();
+        updateEditor();
+      }
+    }
+
+    // Attach event listeners
+    quill.on('text-change', scheduleUpdate);
+    
+    // Initial update
+    updateEditor();
+
+    // Make functions global
+    window.toggleExamples = toggleExamples;
+    window.loadExample = loadExample;
+  </script>
+</body>
+</html>
