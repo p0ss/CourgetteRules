@@ -1,4 +1,4 @@
-# Courgette Method
+# Courgette Codifier
 
 > Plain English rules that compile to code – making legislation executable
 
@@ -287,16 +287,18 @@ Scenario: Family Tax Benefit Part B
 
 ## Style Guide
 
-### Australian English
+### Proper English
 
-Where possib Australian spelling and terminology:
+Where possible courgette supports Australian spelling and terminology:
 - ✅ `recognise` not ❌ `recognize`
 - ✅ `labour` not ❌ `labor`  
 - ✅ `fortnight` not ❌ `two weeks`
 
+
 ### Naming Conventions
 
 **Variables**: Use snake_case
+just adding the underline automatically turns it into a variable
 ```courgette
 is_australian_resident
 has_dependent_children
