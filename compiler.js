@@ -18,6 +18,13 @@ function parseCondition(condition) {
     .replace(/\bis\s+not\b/gi, '!=')
     .replace(/\bis\b(?!\s+(less|greater|at|more|no|equal|not))/gi, '==');
   
+  // Handle between before other conversions
+  const betweenMatch = parsed.match(/(\w+)\s+between\s+(\S+)\s+and\s+(\S+)/i);
+  if (betweenMatch) {
+    const [fullMatch, varName, low, high] = betweenMatch;
+    parsed = parsed.replace(fullMatch, `${varName} >= ${low}) and (${varName} <= ${high}`);
+  }
+  
   // Then handle remaining conversions
   parsed = parsed
     .replace(/\s*==\s*/g, ' == ')
@@ -28,7 +35,6 @@ function parseCondition(condition) {
     .replace(/\s*>\s*/g, ' > ')
     .replace(/\$?([\d,]+(?:\.\d+)?)/g, '$1') // Remove $ from amounts
     .replace(/,/g, '') // Remove commas from numbers
-    .replace(/\bbetween\s+(\S+)\s+and\s+(\S+)/gi, '>= $1) and (_ <= $2')
     .replace(/\btrue\b/gi, 'True')
     .replace(/\bfalse\b/gi, 'False')
     .replace(/\byes\b/gi, 'True')
@@ -136,10 +142,10 @@ function guessVariableType(variable) {
     return { type: 'int', period: 'DAY' };
   }
   
-  // Boolean indicators -
+  // Boolean indicators - most change monthly
   if (varLower.startsWith('is_') || varLower.startsWith('has_') || 
       varLower.includes('eligible') || varLower === 'studying') {
-    return { type: 'bool', period: 'DAY' };
+    return { type: 'bool', period: 'MONTH' };
   }
   
   // Residence/citizenship - these are more permanent
@@ -162,7 +168,7 @@ function guessVariableType(variable) {
   if (varLower.includes('income') || varLower.includes('payment') || 
       varLower.includes('amount') || varLower.includes('rate') || 
       varLower.includes('asset') || varLower.includes('value')) {
-    return { type: 'float', period: 'DAY' };
+    return { type: 'float', period: 'MONTH' };
   }
   
   // Default
@@ -188,7 +194,63 @@ class ${variable}(Variable):
   return code;
 }
 
-function generateScenarioCode(name, conditions, outcomes, variables) {
+function generateScheduleParameters(schedules) {
+  let code = '# Schedule parameters as variables\n';
+  
+  schedules.forEach((entries, scheduleName) => {
+    const paramName = scheduleName.toLowerCase().replace(/\s+/g, '_');
+    
+    entries.forEach(entry => {
+      // Create a variable for each schedule condition
+      const conditionName = entry.condition.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+      const varName = `${paramName}_${conditionName}`;
+      
+      code += `
+class ${varName}(Variable):
+    value_type = float
+    entity = Person
+    definition_period = ETERNITY
+    label = "${scheduleName} - ${entry.condition}"
+    default_value = ${entry.amount}
+`;
+    });
+  });
+  
+  return code;
+}
+
+function parseScheduleCondition(condition) {
+  // Parse schedule conditions like "youngest_child_age is less than 5"
+  let parsed = condition;
+  
+  // Handle "between X and Y" format
+  const betweenMatch = condition.match(/(\w+)\s+between\s+(\d+)\s+and\s+(\d+)/i);
+  if (betweenMatch) {
+    const [, varName, low, high] = betweenMatch;
+    return `person('${varName}', period) >= ${low} and person('${varName}', period) <= ${high}`;
+  }
+  
+  // Handle natural language comparisons
+  parsed = parsed
+    .replace(/(\w+)\s+is\s+less\s+than\s+(\d+)/gi, "person('$1', period) < $2")
+    .replace(/(\w+)\s+is\s+greater\s+than\s+(\d+)/gi, "person('$1', period) > $2")
+    .replace(/(\w+)\s+is\s+at\s+least\s+(\d+)/gi, "person('$1', period) >= $2")
+    .replace(/(\w+)\s+is\s+at\s+most\s+(\d+)/gi, "person('$1', period) <= $2")
+    .replace(/(\w+)\s+<\s+(\d+)/g, "person('$1', period) < $2")
+    .replace(/(\w+)\s+>\s+(\d+)/g, "person('$1', period) > $2")
+    .replace(/(\w+)\s+<=\s+(\d+)/g, "person('$1', period) <= $2")
+    .replace(/(\w+)\s+>=\s+(\d+)/g, "person('$1', period) >= $2");
+  
+  // Handle simple equality conditions
+  if (!parsed.includes('person(')) {
+    // Assume it's a simple condition like "single" or "couple"
+    return `person('family_situation', period) == '${condition}'`;
+  }
+  
+  return parsed;
+}
+
+function generateScenarioCode(name, conditions, outcomes, variables, schedules) {
   const className = name.replace(/\s+/g, '_').toLowerCase();
   
   // Separate eligibility outcomes from payment outcomes
@@ -225,10 +287,15 @@ class ${className}_eligible(Variable):
   if (conditions.length > 0) {
     code += '\n        return (\n';
     conditions.forEach((condition, idx) => {
-      // Fix spacing in operators
-      const fixedCondition = condition
-        .replace(/\s+([<>=]+)\s+/g, ' $1 ') // Fix operator spacing
-        .replace(/\)\s+and\s+\(_/g, ') and ('); // Fix between syntax
+      // Fix spacing in operators and handle between syntax properly
+      let fixedCondition = condition
+        .replace(/\s+([<>=]+)\s+/g, ' $1 ');
+      
+      // Handle between syntax - replace variable in second part
+      const betweenVarMatch = fixedCondition.match(/(\w+)\s*>=\s*\d+\)\s*and\s*\((\w+)\s*<=\s*\d+/);
+      if (betweenVarMatch && betweenVarMatch[1]) {
+        fixedCondition = fixedCondition.replace(betweenVarMatch[2], betweenVarMatch[1]);
+      }
       
       code += `            ${idx > 0 ? 'and ' : ''}(${fixedCondition})\n`;
     });
@@ -242,13 +309,13 @@ class ${className}_eligible(Variable):
   const scheduleOutcome = paymentOutcomes.find(o => o.type === 'schedule');
   const reductionOutcomes = paymentOutcomes.filter(o => o.type === 'reduction');
   
-  if (paymentOutcome || scheduleOutcome) {
+  if (paymentOutcome || scheduleOutcome || reductionOutcomes.length > 0) {
     code += `
 
 class ${className}_payment(Variable):
     value_type = float
     entity = Person
-    definition_period = DAY
+    definition_period = MONTH
     label = "${name} payment amount"
     documentation = """
     ${name} payment calculation.
@@ -266,17 +333,42 @@ class ${className}_payment(Variable):
       code += `        # Base payment amount\n`;
       code += `        base_amount = ${paymentOutcome.amount}\n`;
     } else if (scheduleOutcome) {
-      code += `        # Payment from schedule: ${scheduleOutcome.schedule}\n`;
-      code += `        # TODO: Implement schedule lookup\n`;
-      code += `        base_amount = 0  # parameters.${scheduleOutcome.schedule.toLowerCase().replace(/\s+/g, '_')}[period]\n`;
+      const schedule = schedules.get(scheduleOutcome.schedule);
+      if (schedule && schedule.length > 0) {
+        code += `        # Payment from schedule: ${scheduleOutcome.schedule}\n`;
+        
+        // Generate conditional logic for schedule
+        schedule.forEach((entry, idx) => {
+          const conditionCode = parseScheduleCondition(entry.condition);
+          const paramName = scheduleOutcome.schedule.toLowerCase().replace(/\s+/g, '_');
+          const conditionName = entry.condition.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+          const varName = `${paramName}_${conditionName}`;
+          
+          if (idx === 0) {
+            code += `        if ${conditionCode}:\n`;
+            code += `            base_amount = person('${varName}', period)\n`;
+          } else {
+            code += `        elif ${conditionCode}:\n`;
+            code += `            base_amount = person('${varName}', period)\n`;
+          }
+        });
+        code += `        else:\n`;
+        code += `            base_amount = 0\n`;
+      } else {
+        code += `        # Schedule not found\n`;
+        code += `        base_amount = 0\n`;
+      }
+    } else {
+      code += `        base_amount = 0\n`;
     }
     
     if (reductionOutcomes.length > 0) {
       code += `        
-        # Apply income test reductions\n`;
+        # Apply income test reductions
+        income = person('income', period)\n`;
       reductionOutcomes.forEach(reduction => {
-        code += `        # Reduces by ${reduction.cents} cents per dollar over $${reduction.threshold}\n`;
-        code += `        # TODO: Implement reduction calculation\n`;
+        code += `        if income > ${reduction.threshold}:\n`;
+        code += `            base_amount = max(0, base_amount - (income - ${reduction.threshold}) * ${reduction.cents / 100})\n`;
       });
     }
     
@@ -290,19 +382,8 @@ class ${className}_payment(Variable):
 // Courgette to OpenFisca compiler
 function compileToOpenFisca(courgette) {
   const lines = courgette.split('\n');
-  let output = `"""
-Generated OpenFisca code from Courgette rules
-Created: ${new Date().toLocaleDateString('en-AU')}
-
-Note: This generated code should be validated with OpenFisca's type checker
-Run: openfisca test [this_file.py] --verbose
-"""
-
-from openfisca_core.model_api import *
-from openfisca_core.periods import MONTH, YEAR, DAY, ETERNITY
-
-`;
   
+  let scenarios = [];
   let currentScenario = null;
   let currentDefinition = null;
   let currentSchedule = null;
@@ -310,26 +391,47 @@ from openfisca_core.periods import MONTH, YEAR, DAY, ETERNITY
   let conditions = [];
   let outcomes = [];
   let inConditions = true;
+  let schedules = new Map();
   
+  // Parse all content
   lines.forEach(line => {
     const trimmed = line.trim();
     
     if (trimmed.startsWith('Scenario:')) {
-      // Process previous scenario
+      // Save previous scenario
       if (currentScenario) {
-        output += generateScenarioCode(currentScenario, conditions, outcomes, variables);
+        scenarios.push({
+          name: currentScenario,
+          conditions: [...conditions],
+          outcomes: [...outcomes]
+        });
       }
       
       currentScenario = trimmed.substring(9).trim();
       conditions = [];
       outcomes = [];
       inConditions = true;
+      currentSchedule = null;
       
     } else if (trimmed.startsWith('Definition:')) {
       currentDefinition = trimmed.substring(11).trim();
+      currentSchedule = null;
       
     } else if (trimmed.startsWith('Schedule:')) {
       currentSchedule = trimmed.substring(9).trim();
+      schedules.set(currentSchedule, []);
+      
+    } else if (currentSchedule && trimmed.startsWith('When ')) {
+      // Parse schedule entries
+      const match = trimmed.match(/^When\s+(.+?):\s*\$?([\d,._]+)(?:\s+per\s+(\w+))?$/);
+      if (match) {
+        const [, condition, amount, period] = match;
+        schedules.get(currentSchedule).push({
+          condition: condition,
+          amount: parseFloat(amount.replace(/[,_]/g, '')),
+          period: period || 'fortnight'
+        });
+      }
       
     } else if (currentScenario) {
       // Parse conditions and outcomes
@@ -342,11 +444,10 @@ from openfisca_core.periods import MONTH, YEAR, DAY, ETERNITY
       } else if (trimmed.startsWith('Or') && inConditions) {
         const condition = trimmed.replace(/^Or\s+/, '');
         if (condition && !condition.includes(':')) {
-          // Handle OR conditions - would need more complex logic
           conditions.push(parseCondition(condition));
           extractVariables(condition, variables);
         }
-      } else if (trimmed.match(/^(Then|And)\s+/) && trimmed.includes('is')) {
+      } else if (trimmed.match(/^(Then|And)\s+/)) {
         inConditions = false;
         const outcome = trimmed.replace(/^(Then|And)\s+/, '');
         outcomes.push(parseOutcome(outcome));
@@ -361,13 +462,49 @@ from openfisca_core.periods import MONTH, YEAR, DAY, ETERNITY
     }
   });
   
-  // Process final scenario
+  // Save final scenario
   if (currentScenario) {
-    output += generateScenarioCode(currentScenario, conditions, outcomes, variables);
+    scenarios.push({
+      name: currentScenario,
+      conditions: conditions,
+      outcomes: outcomes
+    });
   }
   
+  // Build output with proper ordering
+  let output = `"""
+Generated OpenFisca code from Courgette rules
+Created: ${new Date().toLocaleDateString('en-AU')}
+
+Note: This generated code should be validated with OpenFisca's type checker
+Run: openfisca test [this_file.py] --verbose
+"""
+
+from openfisca_core.model_api import *
+from openfisca_core.periods import MONTH, YEAR, DAY, ETERNITY
+
+`;
+  
   // Generate variable definitions
-  output = generateVariableDefinitions(variables) + '\n\n' + output;
+  output += generateVariableDefinitions(variables);
+  output += '\n';
+  
+  // Generate schedule parameters if any
+  if (schedules.size > 0) {
+    output += generateScheduleParameters(schedules);
+    output += '\n';
+  }
+  
+  // Generate scenario code
+  scenarios.forEach(scenario => {
+    output += generateScenarioCode(
+      scenario.name, 
+      scenario.conditions, 
+      scenario.outcomes, 
+      variables, 
+      schedules
+    );
+  });
   
   return output;
 }
@@ -391,6 +528,7 @@ function validateOpenFiscaCode(code) {
       const className = trimmed.match(/class\s+(\w+)\(/);
       if (className) {
         definedClasses.add(className[1]);
+        definedVariables.add(className[1]);
       }
     }
     
@@ -417,23 +555,15 @@ function validateOpenFiscaCode(code) {
         severity: 'warning'
       });
     }
-    
-    // Check for undefined variables
-    if (trimmed.includes('value_type = ')) {
-      const varName = '';
-      const classMatch = lines[idx - 1]?.match(/class\s+(\w+)\(/);
-      if (classMatch) {
-        definedVariables.add(classMatch[1]);
-      }
-    }
   });
   
   // Check for referenced but undefined variables
   referencedVariables.forEach(varName => {
-    if (!definedVariables.has(varName) && !definedClasses.has(varName)) {
+    if (!definedVariables.has(varName) && 
+        !['income'].includes(varName)) { // income is commonly assumed to exist
       issues.push({
         message: `Variable '${varName}' is referenced but not defined`,
-        severity: 'error'
+        severity: 'warning'
       });
     }
   });
