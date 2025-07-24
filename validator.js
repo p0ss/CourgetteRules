@@ -318,76 +318,7 @@ function validateCondition(condition, lineNum, columnOffset, errors, lines, line
     );
     
     const hasCodeOp = codeOperators.some(op => {
-        const regex = new RegExp(`\\s*${op.replace(/[<>=]/g, '\\/**
- * Validate a condition expression
- */
-function validateCondition(condition, lineNum, columnOffset, errors, lines, lineIdx) {
-    // Check for common operators
-    const operators = ['==', '!=', '<=', '>=', '<', '>', 'between', 'is', 'not'];
-    const hasOperator = operators.some(op => {
-        const regex = new RegExp(`\\s+${op}\\s+`, 'i');
-        return regex.test(condition);
-    });
-    
-    if (!hasOperator && condition !== '') {
-        errors.push({
-            line: lineNum,
-            column: columnOffset,
-            message: 'Condition missing comparison operator (e.g., ==, <, >, between)',
-            severity: 'error',
-            startOffset: getOffset(lines, lineIdx, columnOffset - 1),
-            endOffset: getOffset(lines, lineIdx, columnOffset - 1 + condition.length)
-        });
-        return;
-    }
-    
-    // Validate between syntax
-    if (condition.includes('between')) {
-        const betweenMatch = condition.match(/(\w+)\s+between\s+(\S+)\s+and\s+(\S+)/i);
-        if (!betweenMatch) {
-            const betweenPos = condition.toLowerCase().indexOf('between');
-            errors.push({
-                line: lineNum,
-                column: columnOffset + betweenPos,
-                message: 'Invalid "between" syntax. Use: variable between X and Y',
-                severity: 'error',
-                startOffset: getOffset(lines, lineIdx, columnOffset - 1 + betweenPos),
-                endOffset: getOffset(lines, lineIdx, columnOffset - 1 + betweenPos + 7)
-            });
-        }
-    }
-    
-    // Check for unmatched quotes
-    const quotes = condition.match(/["']/g) || [];
-    if (quotes.length % 2 !== 0) {
-        errors.push({
-            line: lineNum,
-            column: columnOffset,
-            message: 'Unmatched quotes in condition',
-            severity: 'error',
-            startOffset: getOffset(lines, lineIdx, columnOffset - 1),
-            endOffset: getOffset(lines, lineIdx, columnOffset - 1 + condition.length)
-        });
-    }
-    
-    // Validate boolean values
-    const boolMatch = condition.match(/\b(true|false)\b/gi);
-    if (boolMatch) {
-        boolMatch.forEach(bool => {
-            if (bool !== 'true' && bool !== 'false') {
-                const boolPos = condition.indexOf(bool);
-                errors.push({
-                    line: lineNum,
-                    column: columnOffset + boolPos,
-                    message: `Boolean values should be lowercase: ${bool.toLowerCase()}`,
-                    severity: 'warning',
-                    startOffset: getOffset(lines, lineIdx, columnOffset - 1 + boolPos),
-                    endOffset: getOffset(lines, lineIdx, columnOffset - 1 + boolPos + bool.length)
-                });
-            }
-        });
-    }
-}')}\\s*`);
+        const regex = new RegExp(`\\s*${op.replace(/[<>=]/g, '\\$&')}\\s*`);
         return regex.test(condition);
     });
     
@@ -437,118 +368,36 @@ function validateCondition(condition, lineNum, columnOffset, errors, lines, line
         });
     }
     
+    // Validate boolean values
+    const boolMatch = condition.match(/\b(true|false|yes|no|eligible)\b/gi);
+    if (boolMatch) {
+        boolMatch.forEach(bool => {
+            if (!['true', 'false', 'yes', 'no', 'eligible'].includes(bool.toLowerCase())) {
+                const boolPos = condition.indexOf(bool);
+                errors.push({
+                    line: lineNum,
+                    column: columnOffset + boolPos,
+                    message: `Invalid boolean value: ${bool}`,
+                    severity: 'warning',
+                    startOffset: getOffset(lines, lineIdx, columnOffset - 1 + boolPos),
+                    endOffset: getOffset(lines, lineIdx, columnOffset - 1 + boolPos + bool.length)
+                });
+            }
+        });
+    }
+    
     // Validate money values have $ symbol
     const moneyMatch = condition.match(/\b(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\b/g);
     if (moneyMatch) {
         moneyMatch.forEach(amount => {
             if (parseFloat(amount.replace(/,/g, '')) >= 1000) {
                 const amountPos = condition.indexOf(amount);
-                const hasDollar = condition.substring(Math.max(0, amountPos - 2), amountPos).includes('
-
-/**
- * Validate an outcome expression
- */
-function validateOutcome(outcome, lineNum, columnOffset, errors, lines, lineIdx, schedules) {
-    // Check for eligibility outcomes
-    if (outcome.match(/\w+\s*=\s*true/i) || outcome.match(/\w+\s+is\s+eligible/i)) {
-        // Valid eligibility outcome
-        return;
-    }
-    
-    // Check for payment outcomes
-    if (outcome.match(/payment\s+is\s+\$?[\d,._]+/i)) {
-        const amountMatch = outcome.match(/\$?([\d,._]+)/);
-        if (amountMatch) {
-            const amount = amountMatch[1];
-            if (!/^\d+(?:[,._]\d+)*(?:\.\d+)?$/.test(amount)) {
-                const amountPos = outcome.indexOf(amount);
-                errors.push({
-                    line: lineNum,
-                    column: columnOffset + amountPos,
-                    message: 'Invalid payment amount format',
-                    severity: 'error',
-                    startOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos),
-                    endOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos + amount.length)
-                });
-            }
-        }
-        return;
-    }
-    
-    // Check for schedule references
-    if (outcome.match(/rate\s+is\s+determined\s+by\s+(.+)/i)) {
-        const scheduleMatch = outcome.match(/rate\s+is\s+determined\s+by\s+(.+)/i);
-        const scheduleName = scheduleMatch[1].trim();
-        
-        if (!schedules.has(scheduleName)) {
-            const schedulePos = outcome.indexOf(scheduleName);
-            errors.push({
-                line: lineNum,
-                column: columnOffset + schedulePos,
-                message: `Schedule '${scheduleName}' not defined`,
-                severity: 'error',
-                startOffset: getOffset(lines, lineIdx, columnOffset - 1 + schedulePos),
-                endOffset: getOffset(lines, lineIdx, columnOffset - 1 + schedulePos + scheduleName.length)
-            });
-        }
-        return;
-    }
-    
-    // Check for reduction rules
-    if (outcome.match(/reduces?\s+by\s+\d+\s+cents?\s+per\s+dollar/i)) {
-        return;
-    }
-    
-    // Unknown outcome format
-    errors.push({
-        line: lineNum,
-        column: columnOffset,
-        message: 'Unrecognised outcome format',
-        severity: 'warning',
-        startOffset: getOffset(lines, lineIdx, columnOffset - 1),
-        endOffset: getOffset(lines, lineIdx, columnOffset - 1 + outcome.length)
-    });
-}
-
-/**
- * Extract variable names from a condition
- */
-function extractVariables(condition, variables) {
-    // Simple pattern to extract potential variable names
-    const varPattern = /\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
-    let match;
-    
-    while ((match = varPattern.exec(condition)) !== null) {
-        const varName = match[1];
-        // Exclude keywords and boolean values
-        if (!['and', 'or', 'not', 'between', 'is', 'true', 'false'].includes(varName.toLowerCase())) {
-            variables.add(varName);
-        }
-    }
-}
-
-/**
- * Calculate character offset in the full text
- */
-function getOffset(lines, lineIdx, column) {
-    let offset = 0;
-    for (let i = 0; i < lineIdx; i++) {
-        offset += lines[i].length + 1; // +1 for newline
-    }
-    return offset + column;
-}
-
-// Web Worker message handling
-self.addEventListener('message', (event) => {
-    const { text } = event.data;
-    const errors = validateCourgette(text);
-    self.postMessage({ errors });
-}););
+                const hasDollar = condition.substring(Math.max(0, amountPos - 2), amountPos).includes('$');
                 if (!hasDollar) {
                     errors.push({
                         line: lineNum,
                         column: columnOffset + amountPos,
-                        message: `Consider using $ for monetary amounts: ${amount}`,
+                        message: `Consider using $ for monetary amounts: $${amount}`,
                         severity: 'warning',
                         startOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos),
                         endOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos + amount.length)
@@ -563,11 +412,16 @@ self.addEventListener('message', (event) => {
  * Validate an outcome expression
  */
 function validateOutcome(outcome, lineNum, columnOffset, errors, lines, lineIdx, schedules) {
-    // Check for eligibility outcomes
-    if (outcome.match(/\w+\s*=\s*true/i) || outcome.match(/\w+\s+is\s+eligible/i)) {
-        // Valid eligibility outcome
-        return;
-    }
+    // Check for eligibility outcomes - support natural language
+    const eligibilityPatterns = [
+        /\w+\s*=\s*true/i,
+        /\w+\s+is\s+eligible/i,
+        /\w+\s+is\s+yes/i,
+        /\w+\s+is\s+true/i
+    ];
+    
+    const hasEligibility = eligibilityPatterns.some(pattern => pattern.test(outcome));
+    if (hasEligibility) return;
     
     // Check for payment outcomes
     if (outcome.match(/payment\s+is\s+\$?[\d,._]+/i)) {
@@ -580,6 +434,26 @@ function validateOutcome(outcome, lineNum, columnOffset, errors, lines, lineIdx,
                     line: lineNum,
                     column: columnOffset + amountPos,
                     message: 'Invalid payment amount format',
+                    severity: 'error',
+                    startOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos),
+                    endOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos + amount.length)
+                });
+            }
+        }
+        return;
+    }
+    
+    // Check for base rate outcomes
+    if (outcome.match(/base\s+rate\s+is\s+\$?[\d,._]+/i)) {
+        const amountMatch = outcome.match(/\$?([\d,._]+)/);
+        if (amountMatch) {
+            const amount = amountMatch[1];
+            if (!/^\d+(?:[,._]\d+)*(?:\.\d+)?$/.test(amount)) {
+                const amountPos = outcome.indexOf(amount);
+                errors.push({
+                    line: lineNum,
+                    column: columnOffset + amountPos,
+                    message: 'Invalid base rate amount format',
                     severity: 'error',
                     startOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos),
                     endOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos + amount.length)
@@ -609,7 +483,56 @@ function validateOutcome(outcome, lineNum, columnOffset, errors, lines, lineIdx,
     }
     
     // Check for reduction rules
-    if (outcome.match(/reduces?\s+by\s+\d+\s+cents?\s+per\s+dollar/i)) {
+    if (outcome.match(/(?:payment\s+)?reduces?\s+by\s+\d+\s+cents?\s+per\s+dollar/i)) {
+        const reductionMatch = outcome.match(/reduces?\s+by\s+(\d+)\s+cents?\s+per\s+dollar\s+over\s+\$?([\d,._]+)/i);
+        if (reductionMatch) {
+            const [, cents, threshold] = reductionMatch;
+            
+            // Validate cents
+            if (parseInt(cents) > 100) {
+                errors.push({
+                    line: lineNum,
+                    column: columnOffset + outcome.indexOf(cents),
+                    message: 'Reduction rate cannot exceed 100 cents per dollar',
+                    severity: 'warning',
+                    startOffset: getOffset(lines, lineIdx, columnOffset - 1 + outcome.indexOf(cents)),
+                    endOffset: getOffset(lines, lineIdx, columnOffset - 1 + outcome.indexOf(cents) + cents.length)
+                });
+            }
+            
+            // Validate threshold format
+            if (!/^\d+(?:[,._]\d+)*(?:\.\d+)?$/.test(threshold)) {
+                const thresholdPos = outcome.lastIndexOf(threshold);
+                errors.push({
+                    line: lineNum,
+                    column: columnOffset + thresholdPos,
+                    message: 'Invalid threshold amount format',
+                    severity: 'error',
+                    startOffset: getOffset(lines, lineIdx, columnOffset - 1 + thresholdPos),
+                    endOffset: getOffset(lines, lineIdx, columnOffset - 1 + thresholdPos + threshold.length)
+                });
+            }
+        }
+        return;
+    }
+    
+    // Check for cutout/threshold rules
+    if (outcome.match(/(?:payment\s+)?(?:cuts?\s*out|ceases?)\s+at\s+\$?([\d,._]+)/i)) {
+        const cutoutMatch = outcome.match(/\$?([\d,._]+)/);
+        if (cutoutMatch) {
+            const amount = cutoutMatch[1];
+            if (!/^\d+(?:[,._]\d+)*(?:\.\d+)?$/.test(amount)) {
+                const amountPos = outcome.indexOf(amount);
+                errors.push({
+                    line: lineNum,
+                    column: columnOffset + amountPos,
+                    message: 'Invalid cutout amount format',
+                    severity: 'error',
+                    startOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos),
+                    endOffset: getOffset(lines, lineIdx, columnOffset - 1 + amountPos + amount.length)
+                });
+            }
+        }
         return;
     }
     
@@ -617,7 +540,7 @@ function validateOutcome(outcome, lineNum, columnOffset, errors, lines, lineIdx,
     errors.push({
         line: lineNum,
         column: columnOffset,
-        message: 'Unrecognised outcome format',
+        message: 'Unrecognised outcome format. Expected: eligibility (is eligible), payment amount, schedule reference, or reduction rule',
         severity: 'warning',
         startOffset: getOffset(lines, lineIdx, columnOffset - 1),
         endOffset: getOffset(lines, lineIdx, columnOffset - 1 + outcome.length)
@@ -635,7 +558,12 @@ function extractVariables(condition, variables) {
     while ((match = varPattern.exec(condition)) !== null) {
         const varName = match[1];
         // Exclude keywords and boolean values
-        if (!['and', 'or', 'not', 'between', 'is', 'true', 'false'].includes(varName.toLowerCase())) {
+        const excludeWords = [
+            'and', 'or', 'not', 'between', 'is', 'true', 'false', 'yes', 'no', 'eligible',
+            'less', 'greater', 'than', 'at', 'least', 'most', 'more', 'equal', 'to'
+        ];
+        
+        if (!excludeWords.includes(varName.toLowerCase())) {
             variables.add(varName);
         }
     }
