@@ -63,10 +63,12 @@ class youth_allowance_eligible(Variable):
 You can play around with it in a test environment 
 https://courgette-codifier.netlify.app/
 
-### Web Editor
+### Try locally
 
-No installation is required
-Just Download the files and open `index.html` in a browser. 
+No installation is required if you use Firefox. It won't open locally in other browsers due to a security restriction.
+Download the all files and open `index.html` in Firefox.
+
+## Web Editor
 The editor includes:
 - Syntax highlighting and validation
 - Real-time OpenFisca code generation
