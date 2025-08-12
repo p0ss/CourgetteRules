@@ -65,8 +65,12 @@ https://courgette-codifier.netlify.app/
 
 ### Try locally
 
-No installation is required if you use Firefox. It won't open locally in other browsers due to a security restriction.
+
+Firefox:
 Download the all files and open `index.html` in Firefox.
+
+Other Browsers:
+Download all the files, run server.py and enter http://localhost:8000/index.html in your browser
 
 ## Web Editor
 The editor includes:
