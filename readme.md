@@ -2,6 +2,8 @@
 
 > Plain English rules that compile to code – making legislation executable
 
+**Note:** This is an experimental prototype exploring plain-language rules-as-code concepts. It's intended for experimentation and discussion, not production use.
+
 ## Overview
 
 Courgette rules are a way of writing eligibility rules and calculations which are very close to plain language that can be automatically compiled to code.
@@ -27,9 +29,29 @@ Easy to read right?
 
 This compiles to complete OpenFisca Python code that can calculate eligibility and payment amounts.
 
-```openfisca
+```python
 from openfisca_core.model_api import *
-from openfisca_core.periods import MONTH, YEAR, ETERNITY
+from openfisca_core.periods import MONTH, YEAR, DAY, ETERNITY
+
+# Variable definitions
+
+class age(Variable):
+    value_type = int
+    entity = Person
+    definition_period = DAY
+    label = "age"
+
+class is_student(Variable):
+    value_type = bool
+    entity = Person
+    definition_period = MONTH
+    label = "is student"
+
+class parental_income(Variable):
+    value_type = float
+    entity = Person
+    definition_period = MONTH
+    label = "parental income"
 
 
 class youth_allowance_eligible(Variable):
@@ -37,25 +59,52 @@ class youth_allowance_eligible(Variable):
     entity = Person
     definition_period = MONTH
     label = "Youth Allowance eligibility"
-    
+
     def formula(person, period, parameters):
         age = person('age', period)
         is_student = person('is_student', period)
         parental_income = person('parental_income', period)
-        payment = person('payment', period)
 
-        eligible = (
-            (age >= 16 and person('youth_allowance_eligible', period) <= 24)
-            and (is person('youth_allowance_eligible', period) student == True)
-            and (parental person('youth_allowance_eligible', period) income < 60000)
-            and (payment is $350.50 per fortnight)
+        return (
+            ((age >= 16) and (age <= 24))
+            and (is_student)
+            and ((parental_income < 60000))
         )
 
-        return eligible
+
+class youth_allowance_payment(Variable):
+    value_type = float
+    entity = Person
+    definition_period = MONTH
+    label = "Youth Allowance payment amount"
+
+    def formula(person, period, parameters):
+        eligible = person('youth_allowance_eligible', period)
+
+        if not eligible:
+            return 0
+
+        # Base payment amount
+        base_amount = 350.5
+
+        return base_amount
 ```
 
 ## How it works
- Courgette is an expanded version of [Cucumber/Gherkin](https://cucumber.io/docs/), using [Lark]([https://lark-parser.readthedocs.io/en/latest/](https://lark-parser.readthedocs.io/en/latest/philosophy.html)) free text parser to add custom syntax to cover legislative rules. This is exposed in a [Quill](https://quilljs.com/) wysiwyg editor styled with [AGDS](https://design-system.agriculture.gov.au/), and includes a compiler so that Courgette is continually compiled into [OpenFisca](https://openfisca.org/en/).
+
+Courgette is an expanded version of [Cucumber/Gherkin](https://cucumber.io/docs/) for legislative rules. The web editor uses [Quill](https://quilljs.com/) styled with [AGDS](https://design-system.agriculture.gov.au/), and compiles Courgette to [OpenFisca](https://openfisca.org/en/) in real-time.
+
+### Architecture
+
+The JavaScript compiler (`compiler.js`) uses a three-stage pipeline:
+
+1. **Tokeniser** - Breaks input into tokens (identifiers, operators, numbers, keywords)
+2. **Parser** - Builds an Abstract Syntax Tree (AST) from tokens
+3. **Generator** - Walks the AST to produce Python code
+
+This approach avoids the pitfalls of regex-based string replacement (e.g., mangling variable names like `is_student` when looking for the `is` operator).
+
+There's also a Python parser (`parser.py`) using [Lark](https://lark-parser.readthedocs.io/) which is more sophisticated but not used by the web editor.
 
 ## Installation
 
@@ -395,11 +444,11 @@ def formula(person, period, parameters):
     age = person('age', period)
     is_student = person('is_student', period)
     parental_income = person('parental_income', period)
-    
+
     return (
-        (age >= 16) and (age <= 24) and
-        (is_student == True) and
-        (parental_income < 60000)
+        ((age >= 16) and (age <= 24))
+        and (is_student)
+        and ((parental_income < 60000))
     )
 ```
 
